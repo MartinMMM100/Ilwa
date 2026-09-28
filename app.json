@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "ILWA SafetyMap",
+    "slug": "ilwa-safety-map",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F5F7F9",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "za.co.ilwa.safetymap"
+    },
+    "android": {
+      "package": "za.co.ilwa.safetymap",
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
