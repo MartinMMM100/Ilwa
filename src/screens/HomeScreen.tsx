@@ -44,10 +44,22 @@ export function HomeScreen({ navigate }: HomeScreenProps) {
             </View>
           </View>
 
-          <View style={styles.concerns}>
-            <Concern icon="alert" color={colors.red} label="Street-lighting Concerns" />
-            <Concern icon="alert" color={colors.red} label="Hijacking Reports" />
-            <Concern icon="clock-outline" color={colors.ink} label="Peak Reports: 20:00 - 21:00" />
+          <View style={styles.summaryHeader}>
+            <View>
+              <Text style={styles.eyebrow}>AREA SUMMARY</Text>
+              <Text style={styles.summaryTitle}>Reported threat</Text>
+            </View>
+            <View style={styles.elevatedPill}>
+              <MaterialCommunityIcons name="alert-outline" size={13} color="#855F00" />
+              <Text style={styles.elevatedText}>ELEVATED</Text>
+            </View>
+          </View>
+
+          <View style={styles.metrics}>
+            <Metric label="Common reports" value="Phone snatching, vehicle theft" />
+            <Metric label="Peak hours" value="18:00–22:00" />
+            <Metric label="Reports in period" value="18 community reports" />
+            <Metric label="Last updated" value="Today, 06:42" />
           </View>
 
           <View style={styles.actions}>
@@ -68,16 +80,16 @@ export function HomeScreen({ navigate }: HomeScreenProps) {
           </View>
         </Pressable>
       </ScrollView>
-      <BottomNav active="home" navigate={navigate} />
+      <BottomNav active="map" navigate={navigate} />
     </View>
   );
 }
 
-function Concern({ icon, color, label }: { icon: string; color: string; label: string }) {
+function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.concernRow}>
-      <MaterialCommunityIcons name={icon as never} size={30} color={color} />
-      <Text style={styles.concernText}>{label}</Text>
+    <View style={styles.metric}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue}>{value}</Text>
     </View>
   );
 }
@@ -140,9 +152,31 @@ const styles = StyleSheet.create({
     backgroundColor: colors.redSoft,
   },
   riskText: { color: colors.red, fontSize: 9, fontWeight: '900' },
-  concerns: { marginTop: 9, marginBottom: 7 },
-  concernRow: { minHeight: 39, flexDirection: 'row', alignItems: 'center', gap: 16, paddingLeft: 18 },
-  concernText: { color: colors.ink, fontSize: 14, fontWeight: '500' },
+  summaryHeader: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  eyebrow: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1 },
+  summaryTitle: { marginTop: 2, color: colors.ink, fontSize: 18, fontWeight: '900' },
+  elevatedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: colors.goldSoft,
+  },
+  elevatedText: { color: '#855F00', fontSize: 9, fontWeight: '900' },
+  metrics: { marginVertical: 13, flexDirection: 'row', flexWrap: 'wrap', rowGap: 12 },
+  metric: { width: '50%', paddingRight: 8 },
+  metricLabel: { color: colors.muted, fontSize: 10 },
+  metricValue: { marginTop: 3, color: colors.ink, fontSize: 11, lineHeight: 14, fontWeight: '800' },
   actions: { marginTop: 3, flexDirection: 'row', gap: 18 },
   actionButton: {
     flex: 1,

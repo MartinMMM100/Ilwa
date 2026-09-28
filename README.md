@@ -82,7 +82,7 @@ The news images are loaded from the internet, so they may appear as placeholders
 
 ## Included flows
 
-- Safety map overview with tappable area card and markers
-- Braamfontein area information
+- Safety map with color-coded community report zones and a threat legend
+- Braamfontein area information with response metrics and recent reports
 - Filterable live community feed
-- Interactive incident report form
+- Typed or recorded incident reports with optional photo attachments

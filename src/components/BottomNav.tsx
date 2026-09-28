@@ -5,14 +5,12 @@ import type { Route } from '../../App';
 import { colors } from '../theme';
 
 type BottomNavProps = {
-  active: 'home' | 'map' | 'feed' | 'report';
+  active?: 'map' | 'report';
   navigate: (route: Route) => void;
 };
 
 const items = [
-  { key: 'home', label: 'Home', icon: 'home', route: 'home' },
   { key: 'map', label: 'Map', icon: 'map-outline', route: 'home' },
-  { key: 'feed', label: 'Feed', icon: 'newspaper-variant-outline', route: 'feed' },
   { key: 'report', label: 'Report', icon: 'alert-octagon-outline', route: 'report' },
 ] as const;
 
@@ -44,10 +42,9 @@ export function BottomNav({ active, navigate }: BottomNavProps) {
 
 const styles = StyleSheet.create({
   nav: {
-    height: 68,
-    paddingTop: 7,
-    paddingBottom: 6,
-    paddingHorizontal: 8,
+    height: 66,
+    paddingVertical: 7,
+    paddingHorizontal: 42,
     backgroundColor: colors.white,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.line,
@@ -58,6 +55,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 12,
   },
   pressed: { opacity: 0.55 },
   label: {

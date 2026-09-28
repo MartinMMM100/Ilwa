@@ -64,7 +64,7 @@ export function FeedScreen({ navigate }: FeedScreenProps) {
         ))}
       </ScrollView>
 
-      <BottomNav active="feed" navigate={navigate} />
+      <BottomNav navigate={navigate} />
     </View>
   );
 }

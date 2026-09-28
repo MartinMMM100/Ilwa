@@ -21,6 +21,13 @@ const verticalRoads = [
   { left: '73%', rotate: '6deg' },
 ] as const;
 
+const zones = [
+  { level: 'Lower', top: '20%', left: '30%', width: '31%', height: '29%', color: '#BBD9C3', border: '#27875B', rotate: '3deg' },
+  { level: 'Elevated', top: '18%', left: '62%', width: '30%', height: '27%', color: '#F2D991', border: '#D39A16', rotate: '-3deg' },
+  { level: 'Elevated', top: '52%', left: '31%', width: '29%', height: '31%', color: '#F1D78B', border: '#D39A16', rotate: '-2deg' },
+  { level: 'Higher', top: '49%', left: '62%', width: '31%', height: '32%', color: '#E7AAA5', border: '#D93B37', rotate: '-3deg' },
+] as const;
+
 export function MapCanvas({ detailed = false, onSelectArea }: MapCanvasProps) {
   return (
     <Pressable
@@ -56,25 +63,58 @@ export function MapCanvas({ detailed = false, onSelectArea }: MapCanvasProps) {
         />
       ))}
 
-      <Text style={[styles.street, { top: '21%', left: '46%' }]}>Jorissen St</Text>
-      <Text style={[styles.street, { top: '61%', left: '12%' }]}>De Korte St</Text>
-      <Text style={[styles.areaLabel, { top: '48%', left: '38%' }]}>BRAAMFONTEIN</Text>
+      {zones.map((zone, index) => (
+        <View
+          key={`${zone.level}-${index}`}
+          style={[
+            styles.zone,
+            {
+              top: zone.top,
+              left: zone.left,
+              width: zone.width,
+              height: zone.height,
+              backgroundColor: zone.color,
+              borderColor: zone.border,
+              transform: [{ rotate: zone.rotate }],
+            },
+          ]}
+        />
+      ))}
 
-      <View style={[styles.riskCircle, detailed && styles.riskCircleDetailed]} />
+      <Text style={[styles.street, { top: '29%', left: '67%' }]}>Jorissen St</Text>
+      <Text style={[styles.street, { top: '63%', left: '65%' }]}>De Beer St</Text>
+      <Text style={[styles.street, { top: '76%', left: '6%' }]}>De Korte St</Text>
+      <Text style={[styles.streetVertical, { top: '39%', left: '27%' }]}>Bertha St</Text>
 
-      <View style={[styles.pin, { top: detailed ? '31%' : '42%', left: detailed ? '50%' : '54%' }]}>
-        <MaterialCommunityIcons name="map-marker" size={34} color="#8055B6" />
+      <View style={[styles.pin, { top: detailed ? '63%' : '60%', left: '76%' }]}>
+        <MaterialCommunityIcons name="map-marker" size={42} color="#006B5B" />
       </View>
-      <View style={[styles.warning, { top: detailed ? '58%' : '66%', left: detailed ? '14%' : '46%' }]}>
-        <MaterialCommunityIcons name="alert" size={17} color={colors.white} />
+
+      <View style={styles.mapLabel}>
+        <Text style={styles.mapLabelText}>COMMUNITY REPORT MAP</Text>
       </View>
-      <View style={[styles.warning, { top: detailed ? '72%' : '27%', right: detailed ? '5%' : '17%' }]}>
-        <MaterialCommunityIcons name="alert" size={17} color={colors.white} />
+
+      <View style={styles.zoomControls}>
+        <Text style={styles.zoomText}>+</Text>
+        <View style={styles.zoomDivider} />
+        <Text style={styles.zoomText}>−</Text>
       </View>
-      <View style={[styles.warning, { top: detailed ? '46%' : '78%', left: detailed ? '4%' : '70%' }]}>
-        <MaterialCommunityIcons name="alert" size={17} color={colors.white} />
+
+      <View style={styles.legend}>
+        <LegendItem color="#27875B" label="Lower" />
+        <LegendItem color="#D39A16" label="Elevated" />
+        <LegendItem color="#D93B37" label="Higher" />
       </View>
     </Pressable>
+  );
+}
+
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
   );
 }
 
@@ -127,38 +167,53 @@ const styles = StyleSheet.create({
     fontSize: 8,
     transform: [{ rotate: '-4deg' }],
   },
-  areaLabel: {
+  streetVertical: {
     position: 'absolute',
-    color: '#53616C',
-    fontSize: 10,
-    letterSpacing: 1.1,
+    color: '#35434D',
+    fontSize: 9,
+    fontWeight: '700',
+    transform: [{ rotate: '90deg' }],
   },
-  riskCircle: {
+  zone: {
     position: 'absolute',
-    left: '28%',
-    top: '26%',
-    width: 168,
-    height: 168,
-    borderRadius: 84,
-    borderWidth: 1.5,
-    borderColor: colors.red,
-    backgroundColor: 'rgba(255,38,58,0.15)',
-  },
-  riskCircleDetailed: {
-    left: '32%',
-    top: '10%',
-    width: 190,
-    height: 190,
-    borderRadius: 95,
+    borderWidth: 2,
+    opacity: 0.78,
   },
   pin: { position: 'absolute', marginLeft: -17, marginTop: -17 },
-  warning: {
+  mapLabel: {
     position: 'absolute',
-    width: 25,
-    height: 25,
+    top: 10,
+    left: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     borderRadius: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.red,
+    backgroundColor: 'rgba(255,255,255,0.9)',
   },
+  mapLabelText: { color: colors.navy, fontSize: 8, fontWeight: '900', letterSpacing: 0.6 },
+  zoomControls: {
+    position: 'absolute',
+    left: 10,
+    top: 43,
+    width: 72,
+    height: 34,
+    borderRadius: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.94)',
+  },
+  zoomText: { flex: 1, textAlign: 'center', color: colors.ink, fontSize: 17, fontWeight: '700' },
+  zoomDivider: { width: 1, height: 20, backgroundColor: colors.line },
+  legend: {
+    position: 'absolute',
+    right: 9,
+    top: 10,
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 5,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  legendDot: { width: 7, height: 7, borderRadius: 2 },
+  legendText: { color: '#39444C', fontSize: 8, fontWeight: '700' },
 });
