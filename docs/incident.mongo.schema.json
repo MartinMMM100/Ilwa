@@ -1,0 +1,132 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "title": "ILWA incident document",
+    "required": [
+      "submissionId",
+      "reportReference",
+      "reporterId",
+      "originalDescription",
+      "reportedAt",
+      "updatedAt",
+      "status",
+      "verificationStatus",
+      "extractionStatus",
+      "extractionMethod",
+      "extractionFixtureMatched",
+      "extractedDetails"
+    ],
+    "properties": {
+      "_id": {
+        "bsonType": "objectId",
+        "description": "MongoDB-generated primary key."
+      },
+      "submissionId": {
+        "bsonType": "string",
+        "minLength": 8,
+        "maxLength": 128,
+        "description": "Client-generated idempotency identifier with a unique index."
+      },
+      "reportReference": {
+        "bsonType": "string",
+        "description": "Public-safe report reference with a unique index."
+      },
+      "reporterId": {
+        "bsonType": "string",
+        "description": "Private identity supplied by server-side authentication."
+      },
+      "isDemoData": {
+        "bsonType": "bool",
+        "description": "True only for fictional seeded records. Exclude these from real analytics."
+      },
+      "originalDescription": {
+        "bsonType": "string",
+        "minLength": 10,
+        "maxLength": 5000,
+        "description": "Private, unchanged paragraph submitted by the resident."
+      },
+      "reportedAt": {
+        "bsonType": "date",
+        "description": "Server timestamp for initial storage."
+      },
+      "updatedAt": {
+        "bsonType": "date",
+        "description": "Server timestamp for the most recent workflow update."
+      },
+      "status": {
+        "bsonType": "string",
+        "enum": ["submitted"]
+      },
+      "verificationStatus": {
+        "bsonType": "string",
+        "enum": ["unverified"]
+      },
+      "extractionStatus": {
+        "bsonType": "string",
+        "enum": ["pending", "completed", "failed"]
+      },
+      "extractionMethod": {
+        "bsonType": "string",
+        "enum": ["mock-v1"]
+      },
+      "extractionFixtureMatched": {
+        "bsonType": ["bool", "null"],
+        "description": "Whether the mock extractor matched a configured deterministic fixture."
+      },
+      "extractedDetails": {
+        "bsonType": ["object", "null"],
+        "description": "Validated structured extraction, or null before/after failed extraction.",
+        "required": [
+          "category",
+          "locationText",
+          "timeText",
+          "itemsTaken",
+          "offenderCount",
+          "weaponReported",
+          "injuriesReported",
+          "isOngoing"
+        ],
+        "properties": {
+          "category": {
+            "bsonType": "string",
+            "enum": [
+              "robbery",
+              "theft",
+              "vandalism",
+              "assault",
+              "vehicle_theft",
+              "suspicious_activity",
+              "infrastructure_fault",
+              "other_unclear"
+            ]
+          },
+          "locationText": {
+            "bsonType": ["string", "null"]
+          },
+          "timeText": {
+            "bsonType": ["string", "null"]
+          },
+          "itemsTaken": {
+            "bsonType": "array",
+            "items": {
+              "bsonType": "string"
+            }
+          },
+          "offenderCount": {
+            "bsonType": ["int", "long", "double", "decimal", "null"],
+            "minimum": 0
+          },
+          "weaponReported": {
+            "bsonType": ["string", "null"]
+          },
+          "injuriesReported": {
+            "bsonType": ["string", "null"]
+          },
+          "isOngoing": {
+            "bsonType": ["bool", "null"]
+          }
+        }
+      }
+    }
+  }
+}

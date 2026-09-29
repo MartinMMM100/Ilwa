@@ -36,7 +36,12 @@ export type SubmitIncidentResult = {
 };
 
 export async function submitIncident(
-  input: { reporterId: string; description: string; submissionId: string },
+  input: {
+    reporterId: string;
+    description: string;
+    submissionId: string;
+    isDemoData?: boolean;
+  },
   dependencies: SubmitIncidentDependencies,
 ): Promise<SubmitIncidentResult> {
   const clock = dependencies.clock ?? (() => new Date());
@@ -51,6 +56,7 @@ export async function submitIncident(
     submissionId: input.submissionId,
     reportReference,
     reporterId: input.reporterId,
+    isDemoData: input.isDemoData ?? false,
     originalDescription: input.description,
     reportedAt,
     updatedAt: reportedAt,

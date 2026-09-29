@@ -73,6 +73,14 @@ Start Expo in a second terminal:
 npm start
 ```
 
+To add the deterministic fictional development dataset to MongoDB, run this once after configuring `.env`:
+
+```bash
+npm run seed:incidents
+```
+
+The command is safe to rerun: fixed submission identifiers prevent duplicate seed records. Seeded documents have `isDemoData: true` and must be excluded from real risk statistics.
+
 This starts the Expo development server and displays a QR code.
 
 #### Run on a physical phone
@@ -115,20 +123,6 @@ npm --version
 The news images are loaded from the internet, so they may appear as placeholders when the device is offline.
 
 If the report screen cannot reach the API from a phone, confirm that the phone and computer share a network, the API port is allowed through the firewall, and `EXPO_PUBLIC_API_URL` uses the computer's LAN IP rather than `localhost`.
-
-## Incident reporting
-
-The report screen submits a 10–5,000-character paragraph to `POST /api/incidents`. The existing voice-recording and photo controls remain available. A voice report is reviewed as an editable text transcript before submission, while voice recordings and photo attachments stay on the device until dedicated transcription and media-upload services are added. The server writes only the paragraph to MongoDB before running the deterministic mock extractor. Reports remain `unverified`; extraction success does not imply verification or contact with a responder.
-
-Try this configured fixture:
-
-> Two guys robbed me near Park Station last night around 9. They took my phone and one had a knife.
-
-Saved documents are in the `incidents` collection of the database named by `MONGODB_DB`. In MongoDB Compass, open the configured connection, select that database, and then select `incidents`. `submissionId` and `reportReference` have unique indexes; retries with the same submission identifier return the original report instead of inserting a duplicate.
-
-The replaceable mock boundary is `extractIncident(description)` in `server/incidents/mockExtractor.ts`. Replace that function's implementation when a real AI service is added; the report screen and database workflow do not need to change.
-
-No endpoint for listing or reading incident descriptions is exposed.
 
 ## Checks and tests
 

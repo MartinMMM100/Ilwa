@@ -9,6 +9,7 @@ export type IncidentDocument = {
   submissionId: string;
   reportReference: string;
   reporterId: string;
+  isDemoData?: boolean;
   originalDescription: string;
   reportedAt: Date;
   updatedAt: Date;
