@@ -9,6 +9,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Linking,
@@ -21,31 +22,26 @@ import {
 } from 'react-native';
 
 import type { Route } from '../../App';
+import {
+  createSubmissionId,
+  type IncidentSubmissionResult,
+  submitIncident,
+} from '../api/incidents';
 import { AppHeader } from '../components/AppHeader';
 import { colors } from '../theme';
 
 type ReportScreenProps = { navigate: (route: Route) => void };
 type InputMode = 'text' | 'voice';
 
-const incidentTypes = [
-  'Theft or robbery',
-  'Assault',
-  'Hijacking',
-  'Suspicious activity',
-  'Infrastructure fault',
-  'Other',
-];
-
 export function ReportScreen({ navigate }: ReportScreenProps) {
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [description, setDescription] = useState('');
-  const [location, setLocation] = useState('Braamfontein, Johannesburg');
-  const [happeningNow, setHappeningNow] = useState(true);
-  const [incidentType, setIncidentType] = useState('');
-  const [typeMenuOpen, setTypeMenuOpen] = useState(false);
   const [attachment, setAttachment] = useState<{ uri: string; name: string } | null>(null);
   const [voiceUri, setVoiceUri] = useState<string | null>(null);
-
+  const [submissionId, setSubmissionId] = useState(createSubmissionId);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [savedReport, setSavedReport] = useState<IncidentSubmissionResult | null>(null);
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder, 250);
 
@@ -57,6 +53,10 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
   };
 
   const toggleRecording = async () => {
+    if (isSubmitting || savedReport) {
+      return;
+    }
+
     try {
       if (recorderState.isRecording) {
         await audioRecorder.stop();
@@ -66,7 +66,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
 
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Microphone permission needed', 'Allow microphone access to add a voice note.');
+        Alert.alert('Microphone permission needed', 'Allow microphone access to record for transcription.');
         return;
       }
 
@@ -75,11 +75,15 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
       audioRecorder.record();
       setVoiceUri(null);
     } catch {
-      Alert.alert('Voice note unavailable', 'The recording could not be started on this device.');
+      Alert.alert('Voice recording unavailable', 'The recording could not be started on this device.');
     }
   };
 
   const pickAttachment = async () => {
+    if (isSubmitting || savedReport) {
+      return;
+    }
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
@@ -90,6 +94,51 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
       const asset = result.assets[0];
       setAttachment({ uri: asset.uri, name: asset.fileName ?? 'Photo attached' });
     }
+  };
+
+  const updateDescription = (nextDescription: string) => {
+    if (nextDescription !== description && !isSubmitting && !savedReport) {
+      setSubmissionId(createSubmissionId());
+      setErrorMessage(null);
+    }
+    setDescription(nextDescription);
+  };
+
+  const submit = async () => {
+    if (isSubmitting || savedReport || recorderState.isRecording) {
+      return;
+    }
+
+    const trimmedLength = description.trim().length;
+    if (trimmedLength < 10) {
+      setErrorMessage('Write at least 10 characters so the incident can be understood.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+
+    try {
+      const report = await submitIncident(description, submissionId);
+      setSavedReport(report);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'The report could not be submitted right now.';
+      setErrorMessage(
+        `${detail} Your paragraph is still here. Retrying this draft will not create a duplicate.`,
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const startAnotherReport = () => {
+    setDescription('');
+    setInputMode('text');
+    setAttachment(null);
+    setVoiceUri(null);
+    setSubmissionId(createSubmissionId());
+    setSavedReport(null);
+    setErrorMessage(null);
   };
 
   const requestAssistance = () => {
@@ -103,27 +152,6 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
     );
   };
 
-  const submit = () => {
-    if (inputMode === 'text' && !description.trim()) {
-      Alert.alert('Add an incident summary', 'Describe what you can see and whether anyone is in danger.');
-      return;
-    }
-    if (inputMode === 'voice' && !voiceUri) {
-      Alert.alert('Add a voice note', 'Record and stop a voice note before submitting the report.');
-      return;
-    }
-    if (!location.trim()) {
-      Alert.alert('Add a location', 'Reports need an area or street location.');
-      return;
-    }
-
-    Alert.alert(
-      'Demo report saved',
-      'This report is stored only in the current app session. No emergency service has been contacted.',
-      [{ text: 'Done', onPress: () => navigate('home') }],
-    );
-  };
-
   return (
     <View style={styles.screen}>
       <AppHeader title="Report" showBack onBack={handleBack} />
@@ -134,8 +162,10 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.eyebrow}>COMMUNITY SAFETY REPORT</Text>
-        <Text style={styles.heading}>What is happening?</Text>
-        <Text style={styles.intro}>Share only what you can confirm. Your report helps people understand the area.</Text>
+        <Text style={styles.heading}>What happened?</Text>
+        <Text style={styles.intro}>
+          Describe the incident in one paragraph. Include only details you can confirm; the system will organise the information for review.
+        </Text>
 
         <View style={styles.warningCard}>
           <MaterialCommunityIcons name="shield-alert-outline" size={24} color="#A51E2C" />
@@ -153,37 +183,22 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
           />
           <ModeButton
             icon="microphone-outline"
-            label="Voice note"
+            label="Voice to text"
             selected={inputMode === 'voice'}
             onPress={() => setInputMode('voice')}
           />
         </View>
 
-        {inputMode === 'text' ? (
-          <Field label="Incident summary">
-            <View style={styles.summaryWrap}>
-              <TextInput
-                accessibilityLabel="Incident summary"
-                multiline
-                maxLength={500}
-                onChangeText={setDescription}
-                placeholder="Describe what you can see, where it is happening, and whether anyone is in immediate danger."
-                placeholderTextColor="#8D989F"
-                style={styles.summaryInput}
-                textAlignVertical="top"
-                value={description}
-              />
-              <Text style={styles.counter}>{description.length}/500</Text>
-            </View>
-          </Field>
-        ) : (
-          <Field label="Voice note" helper="Recording begins only when you press record.">
+        {inputMode === 'voice' ? (
+          <Field label="Voice recording" helper="Kept on this device">
             <Pressable
               accessibilityRole="button"
+              disabled={isSubmitting || Boolean(savedReport)}
               onPress={toggleRecording}
               style={({ pressed }) => [
                 styles.recordButton,
                 recorderState.isRecording && styles.recordButtonActive,
+                (isSubmitting || Boolean(savedReport)) && styles.buttonDisabled,
                 pressed && styles.pressed,
               ]}
             >
@@ -196,84 +211,49 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
               </View>
               <View style={styles.recordCopy}>
                 <Text style={styles.recordTitle}>
-                  {recorderState.isRecording ? 'Stop recording' : voiceUri ? 'Voice note ready' : 'Record voice note'}
+                  {recorderState.isRecording
+                    ? 'Stop recording'
+                    : voiceUri
+                      ? 'Voice recording ready'
+                      : 'Record for transcription'}
                 </Text>
                 <Text style={styles.recordDetail}>
                   {recorderState.isRecording
                     ? `${formatDuration(recorderState.durationMillis)} · recording`
                     : voiceUri
-                      ? 'Tap to replace the recording'
-                      : 'Audio stays with this draft until submission'}
+                      ? 'Tap to replace this recording'
+                      : 'The transcript becomes the report paragraph'}
                 </Text>
               </View>
             </Pressable>
-          </Field>
-        )}
-
-        <Field label="Incident location">
-          <View style={styles.textField}>
-            <MaterialCommunityIcons name="map-marker-outline" size={22} color={colors.navy} />
-            <TextInput
-              accessibilityLabel="Incident location"
-              onChangeText={setLocation}
-              placeholder="Area or street"
-              placeholderTextColor="#99A2A9"
-              style={styles.locationInput}
-              value={location}
-            />
-          </View>
-        </Field>
-
-        <Field label="Is this happening now?">
-          <View style={styles.choiceRow}>
-            <Choice label="Yes" selected={happeningNow} onPress={() => setHappeningNow(true)} />
-            <Choice label="No" selected={!happeningNow} onPress={() => setHappeningNow(false)} />
-          </View>
-        </Field>
-
-        <Field label="Incident type" helper="Optional">
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: typeMenuOpen }}
-            onPress={() => setTypeMenuOpen((open) => !open)}
-            style={({ pressed }) => [styles.selectField, pressed && styles.pressed]}
-          >
-            <Text style={[styles.selectText, !incidentType && styles.placeholderText]}>
-              {incidentType || 'Select a type'}
+            <Text style={styles.transcriptionNote}>
+              Automatic speech transcription is not connected yet. Review or type the transcript below before submitting.
             </Text>
-            <MaterialCommunityIcons
-              name={typeMenuOpen ? 'chevron-up' : 'chevron-down'}
-              size={24}
-              color={colors.muted}
-            />
-          </Pressable>
-          {typeMenuOpen ? (
-            <View style={styles.typeMenu}>
-              {incidentTypes.map((type) => (
-                <Pressable
-                  key={type}
-                  accessibilityRole="button"
-                  onPress={() => {
-                    setIncidentType(type);
-                    setTypeMenuOpen(false);
-                  }}
-                  style={({ pressed }) => [styles.typeOption, pressed && styles.typeOptionPressed]}
-                >
-                  <Text style={styles.typeOptionText}>{type}</Text>
-                  {incidentType === type ? (
-                    <MaterialCommunityIcons name="check" size={19} color={colors.green} />
-                  ) : null}
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
+          </Field>
+        ) : null}
+
+        <Field
+          label={inputMode === 'voice' ? 'Editable transcript' : 'Incident description'}
+          helper="10–5,000 characters"
+        >
+          <DescriptionEditor
+            description={description}
+            disabled={isSubmitting || Boolean(savedReport)}
+            hasError={Boolean(errorMessage && !savedReport)}
+            onChange={updateDescription}
+          />
         </Field>
 
-        <Field label="Photo or attachment" helper="Optional">
+        <Field label="Photo or attachment" helper="Optional · kept on this device">
           <Pressable
             accessibilityRole="button"
+            disabled={isSubmitting || Boolean(savedReport)}
             onPress={pickAttachment}
-            style={({ pressed }) => [styles.attachment, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.attachment,
+              (isSubmitting || Boolean(savedReport)) && styles.buttonDisabled,
+              pressed && styles.pressed,
+            ]}
           >
             {attachment ? (
               <Image source={{ uri: attachment.uri }} style={styles.attachmentImage} />
@@ -286,9 +266,11 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
               <Text numberOfLines={1} style={styles.attachmentTitle}>
                 {attachment?.name ?? 'Add a supporting photo'}
               </Text>
-              <Text style={styles.attachmentDetail}>{attachment ? 'Tap to replace' : 'Choose from this device'}</Text>
+              <Text style={styles.attachmentDetail}>
+                {attachment ? 'Tap to replace' : 'Choose from this device'}
+              </Text>
             </View>
-            {attachment ? (
+            {attachment && !isSubmitting && !savedReport ? (
               <Pressable
                 accessibilityLabel="Remove attachment"
                 accessibilityRole="button"
@@ -306,19 +288,52 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
           </Pressable>
         </Field>
 
-        <Pressable
-          accessibilityRole="button"
-          disabled={recorderState.isRecording}
-          onPress={submit}
-          style={({ pressed }) => [
-            styles.submitButton,
-            recorderState.isRecording && styles.buttonDisabled,
-            pressed && styles.pressed,
-          ]}
-        >
-          <MaterialCommunityIcons name="send-outline" size={22} color={colors.white} />
-          <Text style={styles.submitText}>Submit demo report</Text>
-        </Pressable>
+        {errorMessage ? (
+          <View accessibilityLiveRegion="polite" style={styles.errorCard}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#A51E2C" />
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
+
+        {savedReport ? (
+          <View accessibilityLiveRegion="polite" style={styles.successCard}>
+            <MaterialCommunityIcons name="check-circle-outline" size={25} color={colors.green} />
+            <View style={styles.stateCopy}>
+              <Text style={styles.successTitle}>Report saved</Text>
+              <Text selectable style={styles.referenceText}>Reference: {savedReport.reference}</Text>
+              <Text style={styles.successDetail}>{getSuccessDetail(savedReport)}</Text>
+            </View>
+          </View>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ busy: isSubmitting, disabled: isSubmitting || recorderState.isRecording }}
+            disabled={isSubmitting || recorderState.isRecording}
+            onPress={submit}
+            style={({ pressed }) => [
+              styles.submitButton,
+              (isSubmitting || recorderState.isRecording) && styles.buttonDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color={colors.white} />
+            ) : (
+              <MaterialCommunityIcons name="send-outline" size={22} color={colors.white} />
+            )}
+            <Text style={styles.submitText}>{isSubmitting ? 'Saving report…' : 'Submit report'}</Text>
+          </Pressable>
+        )}
+
+        {savedReport ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={startAnotherReport}
+            style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.secondaryText}>Report another incident</Text>
+          </Pressable>
+        ) : null}
 
         <Pressable
           accessibilityRole="button"
@@ -330,9 +345,39 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
         </Pressable>
 
         <Text style={styles.footerNote}>
-          Demo data only. Reports are not transmitted until a secure community-safety backend is connected.
+          Reports are stored as unverified community submissions. Submitting does not contact emergency responders.
         </Text>
       </ScrollView>
+    </View>
+  );
+}
+
+function DescriptionEditor({
+  description,
+  disabled,
+  hasError,
+  onChange,
+}: {
+  description: string;
+  disabled: boolean;
+  hasError: boolean;
+  onChange: (description: string) => void;
+}) {
+  return (
+    <View style={[styles.summaryWrap, hasError && styles.summaryError]}>
+      <TextInput
+        accessibilityLabel="Incident description"
+        editable={!disabled}
+        maxLength={5_000}
+        multiline
+        onChangeText={onChange}
+        placeholder="For example: Two people robbed me near the station last night and took my phone."
+        placeholderTextColor="#8D989F"
+        style={styles.summaryInput}
+        textAlignVertical="top"
+        value={description}
+      />
+      <Text style={styles.counter}>{description.length}/5,000</Text>
     </View>
   );
 }
@@ -381,26 +426,20 @@ function Field({
   );
 }
 
-function Choice({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityState={{ checked: selected }}
-      onPress={onPress}
-      style={[styles.choice, selected && styles.choiceSelected]}
-    >
-      <View style={[styles.radio, selected && styles.radioSelected]}>
-        {selected ? <View style={styles.radioInner} /> : null}
-      </View>
-      <Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function formatDuration(durationMillis: number) {
-  const seconds = Math.max(0, Math.floor(durationMillis / 1000));
+  const seconds = Math.max(0, Math.floor(durationMillis / 1_000));
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function getSuccessDetail(report: IncidentSubmissionResult) {
+  if (report.extractionStatus === 'failed') {
+    return 'The original paragraph is saved and remains unverified. Structured extraction could not be completed; do not resubmit this report.';
+  }
+  if (report.extractionStatus === 'pending') {
+    return 'The original paragraph is saved and remains unverified. Structured processing is still pending; do not resubmit this report.';
+  }
+  return 'The original paragraph and its mock-extracted details are saved. The report remains unverified.';
 }
 
 const styles = StyleSheet.create({
@@ -437,18 +476,25 @@ const styles = StyleSheet.create({
   modeText: { color: colors.navy, fontSize: 13, fontWeight: '800' },
   modeTextSelected: { color: colors.white },
   field: { marginTop: 18 },
-  fieldTitleRow: { marginBottom: 6, flexDirection: 'row', alignItems: 'baseline', gap: 6 },
+  fieldTitleRow: {
+    marginBottom: 6,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
   fieldLabel: { color: colors.ink, fontSize: 13, fontWeight: '900' },
   fieldHelper: { color: colors.muted, fontSize: 10 },
   summaryWrap: {
-    minHeight: 132,
+    minHeight: 208,
     borderWidth: 1.5,
     borderColor: '#C9D0D5',
     borderRadius: 8,
     backgroundColor: colors.white,
   },
-  summaryInput: { minHeight: 105, padding: 11, color: colors.ink, fontSize: 12, lineHeight: 17 },
-  counter: { position: 'absolute', right: 8, bottom: 6, color: colors.muted, fontSize: 9 },
+  summaryError: { borderColor: '#C9414E' },
+  summaryInput: { minHeight: 180, padding: 12, color: colors.ink, fontSize: 13, lineHeight: 19 },
+  counter: { position: 'absolute', right: 9, bottom: 7, color: colors.muted, fontSize: 9 },
   recordButton: {
     minHeight: 74,
     paddingHorizontal: 13,
@@ -472,73 +518,7 @@ const styles = StyleSheet.create({
   recordCopy: { flex: 1, marginLeft: 12 },
   recordTitle: { color: colors.ink, fontSize: 14, fontWeight: '900' },
   recordDetail: { marginTop: 4, color: colors.muted, fontSize: 10 },
-  textField: {
-    minHeight: 48,
-    paddingHorizontal: 12,
-    borderWidth: 1.5,
-    borderColor: '#C9D0D5',
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.white,
-  },
-  locationInput: { flex: 1, marginLeft: 7, color: colors.ink, fontSize: 12 },
-  choiceRow: { flexDirection: 'row', gap: 9 },
-  choice: {
-    flex: 1,
-    minHeight: 47,
-    paddingHorizontal: 13,
-    borderWidth: 1.5,
-    borderColor: '#C9D0D5',
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.white,
-  },
-  choiceSelected: { borderColor: colors.navy, backgroundColor: '#EAF2F7' },
-  radio: {
-    width: 18,
-    height: 18,
-    borderWidth: 1.5,
-    borderColor: '#87939B',
-    borderRadius: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  radioSelected: { borderColor: colors.navy },
-  radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.navy },
-  choiceText: { marginLeft: 8, color: colors.muted, fontSize: 13, fontWeight: '700' },
-  choiceTextSelected: { color: colors.navy },
-  selectField: {
-    minHeight: 48,
-    paddingHorizontal: 12,
-    borderWidth: 1.5,
-    borderColor: '#C9D0D5',
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.white,
-  },
-  selectText: { flex: 1, color: colors.ink, fontSize: 12, fontWeight: '700' },
-  placeholderText: { color: '#8D989F', fontWeight: '500' },
-  typeMenu: {
-    marginTop: 5,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 8,
-    backgroundColor: colors.white,
-  },
-  typeOption: {
-    minHeight: 42,
-    paddingHorizontal: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.line,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  typeOptionPressed: { backgroundColor: '#EEF3F6' },
-  typeOptionText: { flex: 1, color: colors.ink, fontSize: 12 },
+  transcriptionNote: { marginTop: 7, color: colors.muted, fontSize: 9, lineHeight: 13 },
   attachment: {
     minHeight: 62,
     padding: 9,
@@ -561,9 +541,34 @@ const styles = StyleSheet.create({
   attachmentCopy: { flex: 1, marginLeft: 10 },
   attachmentTitle: { color: colors.ink, fontSize: 12, fontWeight: '800' },
   attachmentDetail: { marginTop: 3, color: colors.muted, fontSize: 9 },
+  errorCard: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 9,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+    backgroundColor: colors.redSoft,
+  },
+  errorText: { flex: 1, color: '#7C1B25', fontSize: 11, lineHeight: 16, fontWeight: '700' },
+  successCard: {
+    marginTop: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#A7E0BD',
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: colors.greenSoft,
+  },
+  stateCopy: { flex: 1 },
+  successTitle: { color: '#087437', fontSize: 15, fontWeight: '900' },
+  referenceText: { marginTop: 4, color: colors.ink, fontSize: 12, fontWeight: '900' },
+  successDetail: { marginTop: 4, color: '#26583A', fontSize: 10, lineHeight: 15 },
   submitButton: {
     minHeight: 52,
-    marginTop: 23,
+    marginTop: 20,
     borderRadius: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -572,6 +577,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.navy,
   },
   submitText: { color: colors.white, fontSize: 15, fontWeight: '900' },
+  secondaryButton: {
+    minHeight: 50,
+    marginTop: 10,
+    borderWidth: 1.5,
+    borderColor: colors.green,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.white,
+  },
+  secondaryText: { color: colors.green, fontSize: 14, fontWeight: '900' },
   assistanceButton: {
     minHeight: 50,
     marginTop: 10,
@@ -585,7 +601,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
   assistanceText: { color: colors.navy, fontSize: 14, fontWeight: '900' },
-  buttonDisabled: { opacity: 0.45 },
+  buttonDisabled: { opacity: 0.55 },
   footerNote: { marginTop: 12, color: colors.muted, fontSize: 9, lineHeight: 13, textAlign: 'center' },
   pressed: { opacity: 0.65 },
 });

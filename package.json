@@ -5,25 +5,39 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
+    "server": "tsx server/index.ts",
+    "server:dev": "tsx watch server/index.ts",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "test": "tsx --test --test-isolation=none server/**/*.test.ts",
+    "test:integration": "tsx --test --test-isolation=none server/test/incidents.integration.test.ts",
+    "typecheck": "npm run typecheck:app && npm run typecheck:server",
+    "typecheck:app": "tsc --noEmit",
+    "typecheck:server": "tsc --noEmit -p tsconfig.server.json"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.4",
     "expo": "~57.0.10",
     "expo-audio": "~57.0.5",
     "expo-font": "~57.0.1",
     "expo-image-picker": "~57.0.20",
     "expo-status-bar": "~57.0.1",
+    "express": "^5.2.1",
+    "mongodb": "^7.7.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
-    "react-native-web": "~0.21.0"
+    "react-native-web": "~0.21.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/react": "~19.2.2",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.3"
   }
 }

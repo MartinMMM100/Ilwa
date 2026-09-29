@@ -21,14 +21,14 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow ILWA to record a voice note for your community safety report."
+          "microphonePermission": "Allow ILWA to record a voice note for transcription in your community safety report."
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow ILWA to attach a photo to your community safety report.",
-          "cameraPermission": "Allow ILWA to take a photo for your community safety report.",
+          "photosPermission": "Allow ILWA to attach a supporting photo to your community safety report.",
+          "cameraPermission": "Allow ILWA to take a supporting photo for your community safety report.",
           "microphonePermission": false
         }
       ]
