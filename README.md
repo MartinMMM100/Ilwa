@@ -51,51 +51,7 @@ EXPO_PUBLIC_API_URL=http://localhost:4000
 
 The app has no authentication provider yet. Outside production, the API assigns the explicitly development-only `DEV_REPORTER_ID`. The API refuses to start in `NODE_ENV=production` until real authentication middleware is supplied.
 
-### MongoDB access for group members
-
-Atlas accounts and database users are different:
-
-- An **Atlas user** signs in to the Atlas website and can be allowed to inspect the project through Data Explorer.
-- A **database user** supplies the username and password in `MONGODB_URI` so the local Express API can connect to MongoDB.
-
-Do not commit `.env`, send database passwords in chat, or reuse one person's Atlas login. Give each developer only the access they need.
-
-#### Let a developer run the backend
-
-The Atlas project owner should:
-
-1. Open **Security → Database Access** in the Atlas project.
-2. Create a separate database user for that developer. Grant `readWrite` only on the `ilwa` database; do not grant Atlas-admin permissions just to run the app.
-3. Open **Security → Network Access** and add that developer's current public IP address. Avoid allowing `0.0.0.0/0` for routine development.
-4. Send the username and password through an approved private secret-sharing method. Do not place credentials in Git, an issue, or a group chat.
-
-The developer then creates their own local `.env` from `.env.example` and uses their personal database credentials:
-
-```dotenv
-MONGODB_URI=mongodb+srv://DEVELOPER_USERNAME:URL_ENCODED_PASSWORD@CLUSTER_HOST/?retryWrites=true&w=majority
-MONGODB_DB=ilwa
-DEV_REPORTER_ID=development-only-resident
-PORT=4000
-CLIENT_ORIGIN=http://localhost:8081
-EXPO_PUBLIC_API_URL=http://localhost:4000
-```
-
-If a password contains reserved URI characters such as `@`, `:`, `/`, `?`, or `#`, URL-encode the password before placing it in the connection string. A successful `npm run server` prints `ILWA incident API listening on port 4000.`
-
-#### Let a group member view reports in Atlas
-
-To give somebody read-only access to the documents without sharing a database password:
-
-1. In Atlas, select the ILWA project.
-2. Open **Security → Project Identity & Access**.
-3. Select **Users → Invite to Project** and enter their email address.
-4. Assign **Project Data Access Read Only**. The basic **Project Read Only** role is not enough to open Data Explorer.
-5. Select **Grant Access**. A person outside the organization receives an invitation that expires after 30 days.
-6. After they accept, they can open **Data Explorer → ilwa → incidents** to view saved reports and indexes.
-
-Use **Project Data Access Read/Write** only if that person must manually modify documents. Reserve **Project Owner** for people who must administer project access, database users, networking, or clusters. See MongoDB's official documentation for [managing project access](https://www.mongodb.com/docs/atlas/access/manage-project-access/) and [Atlas user roles](https://www.mongodb.com/docs/atlas/reference/user-roles/).
-
-Incident descriptions, reporter identities, and extracted locations are private. Invite only authorized group members and do not copy, export, or share report data outside the project.
+Group members should request the MongoDB connection details privately from the project owner, place them only in their local `.env`, and then follow the startup commands below. Never commit `.env` or send database credentials through GitHub issues or group chat.
 
 ### 5. Start the API and app
 
@@ -103,6 +59,12 @@ Start the API in one terminal:
 
 ```bash
 npm run server
+```
+
+When MongoDB connects successfully, the terminal displays:
+
+```text
+ILWA incident API listening on port 4000.
 ```
 
 Start Expo in a second terminal:
