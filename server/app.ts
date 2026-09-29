@@ -1,7 +1,9 @@
 import cors from 'cors';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
+import multer, { MulterError } from 'multer';
+import { extname } from 'node:path';
 
-import type { IncidentRepository } from './incidents/model';
+import type { ExtractionMethod, IncidentRepository } from './incidents/model';
 import { incidentRequestSchema } from './incidents/schema';
 import {
   SavedIncidentStatusUnknownError,
@@ -9,25 +11,69 @@ import {
   submitIncident,
 } from './incidents/service';
 import { createDevelopmentReporterMiddleware } from './middleware/developmentReporter';
+import type { AudioTranscriber } from './transcription/openAiTranscriber';
+
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const SUPPORTED_AUDIO_EXTENSIONS = new Set([
+  '.m4a',
+  '.mp3',
+  '.mp4',
+  '.mpeg',
+  '.mpga',
+  '.ogg',
+  '.wav',
+  '.webm',
+]);
+
+class UnsupportedAudioTypeError extends Error {
+  constructor() {
+    super('The recording must be an M4A, MP3, MP4, MPEG, OGG, WAV, or WebM audio file.');
+    this.name = 'UnsupportedAudioTypeError';
+  }
+}
 
 type AppOptions = {
   repository: IncidentRepository;
   environment?: NodeJS.ProcessEnv;
   reporterMiddleware?: RequestHandler;
   extractor?: (description: string) => Promise<unknown>;
+  extractionMethod?: ExtractionMethod;
+  extractionModel?: string | null;
+  fixtureMatcher?: (description: string) => boolean;
+  transcriber?: AudioTranscriber;
 };
 
 export function createApp(options: AppOptions) {
   const environment = options.environment ?? process.env;
   const reporterMiddleware =
     options.reporterMiddleware ?? createDevelopmentReporterMiddleware(environment);
+  const requireReporter: RequestHandler = (request, response, next) => {
+    if (!request.reporterId) {
+      response.status(401).json({
+        error: { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.' },
+      });
+      return;
+    }
+    next();
+  };
+  const audioUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_AUDIO_BYTES, files: 1, fields: 0 },
+    fileFilter(_request, file, callback) {
+      if (!SUPPORTED_AUDIO_EXTENSIONS.has(extname(file.originalname).toLowerCase())) {
+        callback(new UnsupportedAudioTypeError());
+        return;
+      }
+      callback(null, true);
+    },
+  });
   const app = express();
 
   app.disable('x-powered-by');
   app.use(createCorsMiddleware(environment));
   app.use(express.json({ limit: '16kb' }));
 
-  app.post('/api/incidents', reporterMiddleware, async (request, response) => {
+  app.post('/api/incidents', reporterMiddleware, requireReporter, async (request, response) => {
     const parsedRequest = incidentRequestSchema.safeParse(request.body);
     if (!parsedRequest.success) {
       response.status(400).json({
@@ -40,21 +86,20 @@ export function createApp(options: AppOptions) {
       return;
     }
 
-    if (!request.reporterId) {
-      response.status(401).json({
-        error: { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.' },
-      });
-      return;
-    }
-
     try {
       const result = await submitIncident(
         {
-          reporterId: request.reporterId,
+          reporterId: request.reporterId!,
           description: parsedRequest.data.description,
           submissionId: parsedRequest.data.submissionId,
         },
-        { repository: options.repository, extractor: options.extractor },
+        {
+          repository: options.repository,
+          extractor: options.extractor,
+          extractionMethod: options.extractionMethod,
+          extractionModel: options.extractionModel,
+          fixtureMatcher: options.fixtureMatcher,
+        },
       );
 
       response.status(result.duplicate ? 200 : 201).json({
@@ -100,11 +145,69 @@ export function createApp(options: AppOptions) {
     }
   });
 
+  app.post(
+    '/api/transcriptions',
+    reporterMiddleware,
+    requireReporter,
+    audioUpload.single('audio'),
+    async (request, response) => {
+      if (!options.transcriber) {
+        response.status(503).json({
+          error: {
+            code: 'TRANSCRIPTION_UNAVAILABLE',
+            message: 'Voice transcription is not configured on this server.',
+          },
+        });
+        return;
+      }
+
+      if (!request.file) {
+        response.status(400).json({
+          error: { code: 'AUDIO_REQUIRED', message: 'Attach one audio recording to transcribe.' },
+        });
+        return;
+      }
+
+      try {
+        const transcript = await options.transcriber({
+          bytes: request.file.buffer,
+          fileName: request.file.originalname,
+          mediaType: request.file.mimetype,
+        });
+        response.status(200).json({ transcript });
+      } catch {
+        response.status(502).json({
+          error: {
+            code: 'TRANSCRIPTION_FAILED',
+            message: 'The recording could not be transcribed. You can retry the recording.',
+          },
+        });
+      }
+    },
+  );
+
   app.use((_request, response) => {
     response.status(404).json({ error: { code: 'NOT_FOUND', message: 'Not found.' } });
   });
 
   const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
+    if (error instanceof MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      response.status(413).json({
+        error: {
+          code: 'AUDIO_TOO_LARGE',
+          message: 'The recording must be 25 MB or smaller.',
+        },
+      });
+      return;
+    }
+
+    if (error instanceof UnsupportedAudioTypeError) {
+      response.status(400).json({
+        error: { code: 'UNSUPPORTED_AUDIO_TYPE', message: error.message },
+      });
+      return;
+    }
+
     if (error instanceof SyntaxError) {
       response.status(400).json({
         error: { code: 'INVALID_JSON', message: 'The request body must be valid JSON.' },

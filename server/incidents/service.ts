@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 
 import { didMatchMockFixture, extractIncident } from './mockExtractor';
 import { DuplicateSubmissionError } from './mongoRepository';
-import type { ExtractionStatus, IncidentDocument, IncidentRepository } from './model';
+import type {
+  ExtractionMethod,
+  ExtractionStatus,
+  IncidentDocument,
+  IncidentRepository,
+} from './model';
 import { incidentDetailsSchema } from './schema';
 
 export class SubmissionConflictError extends Error {
@@ -25,6 +30,8 @@ type SubmitIncidentDependencies = {
   repository: IncidentRepository;
   extractor?: Extractor;
   fixtureMatcher?: (description: string) => boolean;
+  extractionMethod?: ExtractionMethod;
+  extractionModel?: string | null;
   clock?: () => Date;
   referenceFactory?: () => string;
 };
@@ -46,7 +53,11 @@ export async function submitIncident(
 ): Promise<SubmitIncidentResult> {
   const clock = dependencies.clock ?? (() => new Date());
   const extractor = dependencies.extractor ?? extractIncident;
-  const fixtureMatcher = dependencies.fixtureMatcher ?? didMatchMockFixture;
+  const extractionMethod = dependencies.extractionMethod ?? 'mock-v1';
+  const extractionModel = dependencies.extractionModel ?? null;
+  const fixtureMatcher =
+    dependencies.fixtureMatcher ??
+    (extractionMethod === 'mock-v1' ? didMatchMockFixture : undefined);
   const reportReference =
     dependencies.referenceFactory?.() ??
     `ILWA-${randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`;
@@ -63,7 +74,8 @@ export async function submitIncident(
     status: 'submitted',
     verificationStatus: 'unverified',
     extractionStatus: 'pending',
-    extractionMethod: 'mock-v1',
+    extractionMethod,
+    extractionModel,
     extractionFixtureMatched: null,
     extractedDetails: null,
   };
@@ -102,7 +114,7 @@ export async function submitIncident(
     await dependencies.repository.completeExtraction(
       reportReference,
       details,
-      fixtureMatcher(input.description),
+      fixtureMatcher?.(input.description) ?? null,
       clock(),
     );
     return { reportReference, extractionStatus: 'completed', duplicate: false };

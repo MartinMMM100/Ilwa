@@ -32,8 +32,9 @@ One document represents one submitted incident. The original paragraph and repor
   status: "submitted",
   verificationStatus: "unverified",
   extractionStatus: "completed",
-  extractionMethod: "mock-v1",
-  extractionFixtureMatched: true,
+  extractionMethod: "openai-responses-v1",
+  extractionModel: "gpt-6-luna",
+  extractionFixtureMatched: null,
 
   extractedDetails: {
     category: "robbery",
@@ -65,8 +66,9 @@ The example values are fictional. `locationText` and `timeText` are extracted ph
 | `status` | `submitted` | Server | Submission lifecycle state. |
 | `verificationStatus` | `unverified` | Server | Extraction never changes verification. |
 | `extractionStatus` | `pending`, `completed`, or `failed` | Server | Structured-extraction workflow state. |
-| `extractionMethod` | `mock-v1` | Server | Extractor version used for this implementation. |
-| `extractionFixtureMatched` | boolean or null | Server | Whether a deterministic mock fixture matched. |
+| `extractionMethod` | `mock-v1` or `openai-responses-v1` | Server | Extraction provider and workflow version. |
+| `extractionModel` | string or null | Server | OpenAI model used, or null for the mock extractor. |
+| `extractionFixtureMatched` | boolean or null | Server | Whether a deterministic mock fixture matched; null for real AI. |
 | `extractedDetails` | object or null | Extractor | Validated structured facts. Null while pending or after failure. |
 
 ## `extractedDetails` fields
@@ -100,7 +102,7 @@ other_unclear
 ```text
 POST /api/incidents
   → insert original document with extractionStatus: pending
-  → call extractIncident(description)
+  → call the configured extractIncident(description) implementation
   → validate the returned structure
   → update extractionStatus to completed and store extractedDetails
 
@@ -110,6 +112,18 @@ If extraction fails:
   → keep verificationStatus as unverified
   → return the saved reportReference
 ```
+
+Set `INCIDENT_EXTRACTOR=mock` for deterministic fixture extraction or
+`INCIDENT_EXTRACTOR=openai` for the server-side OpenAI implementation. OpenAI mode also uses
+`OPENAI_API_KEY` and `OPENAI_INCIDENT_MODEL`. It does not fall back to mock extraction when an
+API call fails.
+
+## Voice transcription boundary
+
+`POST /api/transcriptions` accepts one completed audio recording, holds it in server memory only,
+and returns an editable transcript. The route does not create an incident document and does not
+store audio in MongoDB. A resident must review the returned text and separately submit the normal
+incident form before `originalDescription` is saved.
 
 ## Indexes
 

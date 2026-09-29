@@ -13,6 +13,7 @@
       "verificationStatus",
       "extractionStatus",
       "extractionMethod",
+      "extractionModel",
       "extractionFixtureMatched",
       "extractedDetails"
     ],
@@ -67,11 +68,15 @@
       },
       "extractionMethod": {
         "bsonType": "string",
-        "enum": ["mock-v1"]
+        "enum": ["mock-v1", "openai-responses-v1"]
+      },
+      "extractionModel": {
+        "bsonType": ["string", "null"],
+        "description": "OpenAI model used for extraction, or null for the mock extractor."
       },
       "extractionFixtureMatched": {
         "bsonType": ["bool", "null"],
-        "description": "Whether the mock extractor matched a configured deterministic fixture."
+        "description": "Whether the mock extractor matched a configured deterministic fixture; null for real AI."
       },
       "extractedDetails": {
         "bsonType": ["object", "null"],

@@ -27,6 +27,7 @@ import {
   type IncidentSubmissionResult,
   submitIncident,
 } from '../api/incidents';
+import { transcribeIncidentAudio } from '../api/transcriptions';
 import { AppHeader } from '../components/AppHeader';
 import { colors } from '../theme';
 
@@ -40,10 +41,40 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
   const [voiceUri, setVoiceUri] = useState<string | null>(null);
   const [submissionId, setSubmissionId] = useState(createSubmissionId);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptionFailed, setTranscriptionFailed] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savedReport, setSavedReport] = useState<IncidentSubmissionResult | null>(null);
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder, 250);
+
+  const transcribeVoiceRecording = async (recordingUri: string) => {
+    setIsTranscribing(true);
+    setTranscriptionFailed(false);
+    setErrorMessage(null);
+
+    try {
+      const transcript = await transcribeIncidentAudio(recordingUri);
+      setDescription(transcript);
+      setSubmissionId(createSubmissionId());
+
+      const transcriptLength = transcript.trim().length;
+      if (transcriptLength < 10 || transcriptLength > 5_000) {
+        setErrorMessage(
+          'The transcript must be between 10 and 5,000 characters. Edit it before submitting.',
+        );
+      }
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : 'The recording could not be transcribed.';
+      setTranscriptionFailed(true);
+      setErrorMessage(
+        `${detail} The recording is still available so you can retry or type the transcript.`,
+      );
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
 
   const handleBack = async () => {
     if (recorderState.isRecording) {
@@ -53,14 +84,24 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
   };
 
   const toggleRecording = async () => {
-    if (isSubmitting || savedReport) {
+    if (isSubmitting || isTranscribing || savedReport) {
       return;
     }
 
     try {
       if (recorderState.isRecording) {
         await audioRecorder.stop();
-        setVoiceUri(audioRecorder.uri ?? null);
+        const recordingUri = audioRecorder.uri;
+        setVoiceUri(recordingUri ?? null);
+        if (!recordingUri) {
+          throw new Error('The device did not provide the completed recording.');
+        }
+        await transcribeVoiceRecording(recordingUri);
+        return;
+      }
+
+      if (transcriptionFailed && voiceUri) {
+        await transcribeVoiceRecording(voiceUri);
         return;
       }
 
@@ -74,13 +115,15 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
       setVoiceUri(null);
+      setTranscriptionFailed(false);
+      setErrorMessage(null);
     } catch {
       Alert.alert('Voice recording unavailable', 'The recording could not be started on this device.');
     }
   };
 
   const pickAttachment = async () => {
-    if (isSubmitting || savedReport) {
+    if (isSubmitting || isTranscribing || savedReport) {
       return;
     }
 
@@ -97,7 +140,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
   };
 
   const updateDescription = (nextDescription: string) => {
-    if (nextDescription !== description && !isSubmitting && !savedReport) {
+    if (nextDescription !== description && !isSubmitting && !isTranscribing && !savedReport) {
       setSubmissionId(createSubmissionId());
       setErrorMessage(null);
     }
@@ -105,7 +148,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
   };
 
   const submit = async () => {
-    if (isSubmitting || savedReport || recorderState.isRecording) {
+    if (isSubmitting || isTranscribing || savedReport || recorderState.isRecording) {
       return;
     }
 
@@ -136,6 +179,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
     setInputMode('text');
     setAttachment(null);
     setVoiceUri(null);
+    setTranscriptionFailed(false);
     setSubmissionId(createSubmissionId());
     setSavedReport(null);
     setErrorMessage(null);
@@ -190,45 +234,81 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
         </View>
 
         {inputMode === 'voice' ? (
-          <Field label="Voice recording" helper="Kept on this device">
+          <Field label="Voice recording" helper="Uploaded temporarily for transcription">
             <Pressable
               accessibilityRole="button"
-              disabled={isSubmitting || Boolean(savedReport)}
+              disabled={isSubmitting || isTranscribing || Boolean(savedReport)}
               onPress={toggleRecording}
               style={({ pressed }) => [
                 styles.recordButton,
                 recorderState.isRecording && styles.recordButtonActive,
-                (isSubmitting || Boolean(savedReport)) && styles.buttonDisabled,
+                (isSubmitting || isTranscribing || Boolean(savedReport)) && styles.buttonDisabled,
                 pressed && styles.pressed,
               ]}
             >
               <View style={[styles.recordIcon, recorderState.isRecording && styles.recordIconActive]}>
-                <MaterialCommunityIcons
-                  name={recorderState.isRecording ? 'stop' : voiceUri ? 'check' : 'microphone'}
-                  size={24}
-                  color={colors.white}
-                />
+                {isTranscribing ? (
+                  <ActivityIndicator color={colors.white} />
+                ) : (
+                  <MaterialCommunityIcons
+                    name={
+                      recorderState.isRecording
+                        ? 'stop'
+                        : transcriptionFailed
+                          ? 'refresh'
+                          : voiceUri
+                            ? 'check'
+                            : 'microphone'
+                    }
+                    size={24}
+                    color={colors.white}
+                  />
+                )}
               </View>
               <View style={styles.recordCopy}>
                 <Text style={styles.recordTitle}>
                   {recorderState.isRecording
                     ? 'Stop recording'
-                    : voiceUri
-                      ? 'Voice recording ready'
+                    : isTranscribing
+                      ? 'Transcribing recording…'
+                      : transcriptionFailed
+                        ? 'Retry transcription'
+                        : voiceUri
+                          ? 'Transcript ready for review'
                       : 'Record for transcription'}
                 </Text>
                 <Text style={styles.recordDetail}>
                   {recorderState.isRecording
                     ? `${formatDuration(recorderState.durationMillis)} · recording`
-                    : voiceUri
-                      ? 'Tap to replace this recording'
-                      : 'The transcript becomes the report paragraph'}
+                    : isTranscribing
+                      ? 'Keep this screen open while the audio is processed'
+                      : transcriptionFailed
+                        ? 'Tap to send the same recording again'
+                        : voiceUri
+                          ? 'Review and edit the paragraph below before submitting'
+                          : 'The transcript becomes an editable report paragraph'}
                 </Text>
               </View>
             </Pressable>
             <Text style={styles.transcriptionNote}>
-              Automatic speech transcription is not connected yet. Review or type the transcript below before submitting.
+              The recording is sent to the transcription service and is not stored in MongoDB. Always review the text below before submitting.
             </Text>
+            {transcriptionFailed && voiceUri ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setVoiceUri(null);
+                  setTranscriptionFailed(false);
+                  setErrorMessage(null);
+                }}
+                style={({ pressed }) => [
+                  styles.discardRecordingButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.discardRecordingText}>Discard and record again</Text>
+              </Pressable>
+            ) : null}
           </Field>
         ) : null}
 
@@ -238,7 +318,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
         >
           <DescriptionEditor
             description={description}
-            disabled={isSubmitting || Boolean(savedReport)}
+            disabled={isSubmitting || isTranscribing || Boolean(savedReport)}
             hasError={Boolean(errorMessage && !savedReport)}
             onChange={updateDescription}
           />
@@ -247,11 +327,11 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
         <Field label="Photo or attachment" helper="Optional · kept on this device">
           <Pressable
             accessibilityRole="button"
-            disabled={isSubmitting || Boolean(savedReport)}
+            disabled={isSubmitting || isTranscribing || Boolean(savedReport)}
             onPress={pickAttachment}
             style={({ pressed }) => [
               styles.attachment,
-              (isSubmitting || Boolean(savedReport)) && styles.buttonDisabled,
+              (isSubmitting || isTranscribing || Boolean(savedReport)) && styles.buttonDisabled,
               pressed && styles.pressed,
             ]}
           >
@@ -307,21 +387,31 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
         ) : (
           <Pressable
             accessibilityRole="button"
-            accessibilityState={{ busy: isSubmitting, disabled: isSubmitting || recorderState.isRecording }}
-            disabled={isSubmitting || recorderState.isRecording}
+            accessibilityState={{
+              busy: isSubmitting || isTranscribing,
+              disabled: isSubmitting || isTranscribing || recorderState.isRecording,
+            }}
+            disabled={isSubmitting || isTranscribing || recorderState.isRecording}
             onPress={submit}
             style={({ pressed }) => [
               styles.submitButton,
-              (isSubmitting || recorderState.isRecording) && styles.buttonDisabled,
+              (isSubmitting || isTranscribing || recorderState.isRecording) &&
+                styles.buttonDisabled,
               pressed && styles.pressed,
             ]}
           >
-            {isSubmitting ? (
+            {isSubmitting || isTranscribing ? (
               <ActivityIndicator color={colors.white} />
             ) : (
               <MaterialCommunityIcons name="send-outline" size={22} color={colors.white} />
             )}
-            <Text style={styles.submitText}>{isSubmitting ? 'Saving report…' : 'Submit report'}</Text>
+            <Text style={styles.submitText}>
+              {isSubmitting
+                ? 'Saving report…'
+                : isTranscribing
+                  ? 'Transcribing…'
+                  : 'Submit report'}
+            </Text>
           </Pressable>
         )}
 
@@ -439,7 +529,7 @@ function getSuccessDetail(report: IncidentSubmissionResult) {
   if (report.extractionStatus === 'pending') {
     return 'The original paragraph is saved and remains unverified. Structured processing is still pending; do not resubmit this report.';
   }
-  return 'The original paragraph and its mock-extracted details are saved. The report remains unverified.';
+  return 'The original paragraph and its structured details are saved. The report remains unverified.';
 }
 
 const styles = StyleSheet.create({
@@ -519,6 +609,8 @@ const styles = StyleSheet.create({
   recordTitle: { color: colors.ink, fontSize: 14, fontWeight: '900' },
   recordDetail: { marginTop: 4, color: colors.muted, fontSize: 10 },
   transcriptionNote: { marginTop: 7, color: colors.muted, fontSize: 9, lineHeight: 13 },
+  discardRecordingButton: { alignSelf: 'flex-start', marginTop: 7, paddingVertical: 4 },
+  discardRecordingText: { color: colors.navy, fontSize: 10, fontWeight: '800' },
   attachment: {
     minHeight: 62,
     padding: 9,

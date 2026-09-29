@@ -87,3 +87,39 @@ test('retrying the same submission returns one saved report and runs extraction 
     duplicate: true,
   });
 });
+
+test('real AI extraction metadata is stored without claiming a mock fixture match', async () => {
+  const repository = new TestIncidentRepository();
+  const extractedDetails = {
+    category: 'robbery' as const,
+    locationText: 'near Park Station',
+    timeText: 'last night around 9',
+    itemsTaken: ['phone'],
+    offenderCount: 2,
+    weaponReported: 'knife',
+    injuriesReported: null,
+    isOngoing: null,
+  };
+
+  await submitIncident(
+    {
+      reporterId: 'development-only-test-resident',
+      description,
+      submissionId: 'submission-openai-1',
+    },
+    {
+      repository,
+      extractor: async () => extractedDetails,
+      extractionMethod: 'openai-responses-v1',
+      extractionModel: 'test-incident-model',
+      referenceFactory: () => 'ILWA-OPENAI0001',
+    },
+  );
+
+  const stored = repository.documents.get('submission-openai-1');
+  assert.ok(stored);
+  assert.equal(stored.extractionMethod, 'openai-responses-v1');
+  assert.equal(stored.extractionModel, 'test-incident-model');
+  assert.equal(stored.extractionFixtureMatched, null);
+  assert.deepEqual(stored.extractedDetails, extractedDetails);
+});

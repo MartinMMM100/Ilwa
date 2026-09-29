@@ -3,6 +3,7 @@ import type { ObjectId } from 'mongodb';
 import type { IncidentDetails } from './schema';
 
 export type ExtractionStatus = 'pending' | 'completed' | 'failed';
+export type ExtractionMethod = 'mock-v1' | 'openai-responses-v1';
 
 export type IncidentDocument = {
   _id?: ObjectId;
@@ -16,7 +17,8 @@ export type IncidentDocument = {
   status: 'submitted';
   verificationStatus: 'unverified';
   extractionStatus: ExtractionStatus;
-  extractionMethod: 'mock-v1';
+  extractionMethod: ExtractionMethod;
+  extractionModel: string | null;
   extractionFixtureMatched: boolean | null;
   extractedDetails: IncidentDetails | null;
 };
@@ -39,7 +41,7 @@ export interface IncidentRepository {
   completeExtraction(
     reportReference: string,
     details: IncidentDetails,
-    fixtureMatched: boolean,
+    fixtureMatched: boolean | null,
     updatedAt: Date,
   ): Promise<void>;
   failExtraction(reportReference: string, updatedAt: Date): Promise<void>;

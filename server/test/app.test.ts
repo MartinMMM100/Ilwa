@@ -76,6 +76,100 @@ test('development-only identity cannot be enabled in production', () => {
   );
 });
 
+test('POST /api/transcriptions returns an editable transcript without storing audio', async () => {
+  const repository = new TestIncidentRepository();
+  let receivedFileName: string | undefined;
+  let receivedMediaType: string | undefined;
+  let receivedByteLength: number | undefined;
+  const app = createApp({
+    repository,
+    environment: { NODE_ENV: 'test', DEV_REPORTER_ID: 'development-only-test-resident' },
+    transcriber: async (audio) => {
+      receivedFileName = audio.fileName;
+      receivedMediaType = audio.mediaType;
+      receivedByteLength = audio.bytes.byteLength;
+      return 'A resident reported a robbery near the station.';
+    },
+  });
+
+  await withServer(app.listen(0), async (baseUrl) => {
+    const form = new FormData();
+    form.append('audio', new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/mp4' }), 'incident.m4a');
+    const response = await fetch(`${baseUrl}/api/transcriptions`, {
+      method: 'POST',
+      body: form,
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      transcript: 'A resident reported a robbery near the station.',
+    });
+    assert.equal(receivedFileName, 'incident.m4a');
+    assert.equal(receivedMediaType, 'audio/mp4');
+    assert.equal(receivedByteLength, 3);
+    assert.equal(repository.documents.size, 0);
+  });
+});
+
+test('POST /api/transcriptions rejects missing and unsupported audio', async () => {
+  const app = createApp({
+    repository: new TestIncidentRepository(),
+    environment: { NODE_ENV: 'test', DEV_REPORTER_ID: 'development-only-test-resident' },
+    transcriber: async () => 'Transcript should not be reached.',
+  });
+
+  await withServer(app.listen(0), async (baseUrl) => {
+    const missingResponse = await fetch(`${baseUrl}/api/transcriptions`, {
+      method: 'POST',
+      body: new FormData(),
+    });
+    assert.equal(missingResponse.status, 400);
+    assert.equal(
+      ((await missingResponse.json()) as { error: { code: string } }).error.code,
+      'AUDIO_REQUIRED',
+    );
+
+    const unsupportedForm = new FormData();
+    unsupportedForm.append('audio', new Blob(['not audio'], { type: 'text/plain' }), 'report.txt');
+    const unsupportedResponse = await fetch(`${baseUrl}/api/transcriptions`, {
+      method: 'POST',
+      body: unsupportedForm,
+    });
+    assert.equal(unsupportedResponse.status, 400);
+    assert.equal(
+      ((await unsupportedResponse.json()) as { error: { code: string } }).error.code,
+      'UNSUPPORTED_AUDIO_TYPE',
+    );
+  });
+});
+
+test('POST /api/transcriptions reports provider failure without creating an incident', async () => {
+  const repository = new TestIncidentRepository();
+  const app = createApp({
+    repository,
+    environment: { NODE_ENV: 'test', DEV_REPORTER_ID: 'development-only-test-resident' },
+    transcriber: async () => {
+      throw new Error('Synthetic transcription failure');
+    },
+  });
+
+  await withServer(app.listen(0), async (baseUrl) => {
+    const form = new FormData();
+    form.append('audio', new Blob([new Uint8Array([1])], { type: 'audio/webm' }), 'incident.webm');
+    const response = await fetch(`${baseUrl}/api/transcriptions`, {
+      method: 'POST',
+      body: form,
+    });
+
+    assert.equal(response.status, 502);
+    assert.equal(
+      ((await response.json()) as { error: { code: string } }).error.code,
+      'TRANSCRIPTION_FAILED',
+    );
+    assert.equal(repository.documents.size, 0);
+  });
+});
+
 async function withServer(server: Server, callback: (baseUrl: string) => Promise<void>) {
   await once(server, 'listening');
   const address = server.address();

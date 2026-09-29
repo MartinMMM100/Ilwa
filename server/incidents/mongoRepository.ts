@@ -40,7 +40,7 @@ export class MongoIncidentRepository implements IncidentRepository {
   async completeExtraction(
     reportReference: string,
     details: IncidentDetails,
-    fixtureMatched: boolean,
+    fixtureMatched: boolean | null,
     updatedAt: Date,
   ) {
     const result = await this.incidents.updateOne(

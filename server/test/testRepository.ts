@@ -23,7 +23,7 @@ export class TestIncidentRepository implements IncidentRepository {
   async completeExtraction(
     reportReference: string,
     details: IncidentDetails,
-    fixtureMatched: boolean,
+    fixtureMatched: boolean | null,
     updatedAt: Date,
   ) {
     const incident = this.findByReference(reportReference);
