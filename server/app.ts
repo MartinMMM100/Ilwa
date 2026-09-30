@@ -466,6 +466,7 @@ export function createApp(options: AppOptions) {
           reporterId: request.reporterId!,
           description: parsedRequest.data.description,
           submissionId: parsedRequest.data.submissionId,
+          mapLocationId: parsedRequest.data.mapLocationId,
         },
         {
           repository: options.repository,
@@ -697,6 +698,34 @@ export function createApp(options: AppOptions) {
       response.status(500).json({
         error: { code: 'PHOTO_FETCH_FAILED', message: 'The incident photo could not be retrieved.' },
       });
+    }
+  });
+
+  app.patch('/api/admin/incidents/:reportReference/verification', async (request, response) => {
+    const status: unknown = request.body?.status;
+    if (status !== 'verified' && status !== 'dismissed' && status !== 'unverified') {
+      response.status(400).json({
+        error: { code: 'INVALID_STATUS', message: 'Status must be verified, dismissed or unverified.' },
+      });
+      return;
+    }
+    if (!options.repository.setVerificationStatus) {
+      response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: 'Not supported by this repository.' } });
+      return;
+    }
+    try {
+      const found = await options.repository.setVerificationStatus(
+        request.params.reportReference,
+        status,
+        new Date(),
+      );
+      if (!found) {
+        response.status(404).json({ error: { code: 'NOT_FOUND', message: 'Incident not found.' } });
+        return;
+      }
+      response.status(200).json({ reportReference: request.params.reportReference, verificationStatus: status });
+    } catch {
+      response.status(500).json({ error: { code: 'UPDATE_FAILED', message: 'The status could not be updated.' } });
     }
   });
 

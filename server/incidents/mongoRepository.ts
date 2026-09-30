@@ -6,6 +6,7 @@ import type {
   IncidentPhotoMetadata,
   IncidentRepository,
   StoredIncident,
+  VerificationStatus,
 } from './model';
 import type { ThreatAssessmentMethod, ThreatLevel } from './threatAssessment';
 
@@ -20,7 +21,8 @@ export class MongoIncidentRepository implements IncidentRepository {
   constructor(private readonly incidents: Collection<IncidentDocument>) {}
 
   async listMapIncidents(): Promise<IncidentDocument[]> {
-    return this.incidents.find({ isDemoData: true, extractionStatus: 'completed',
+    return this.incidents.find({ $or: [{ isDemoData: true }, { mapLocationId: { $exists: true } }],
+      extractionStatus: 'completed', verificationStatus: { $ne: 'dismissed' },
       reportedAt: { $gte: new Date(Date.now() - 30 * 86_400_000) } }).toArray();
   }
 
@@ -126,9 +128,17 @@ export class MongoIncidentRepository implements IncidentRepository {
     return this.incidents.find({}).sort({ reportedAt: -1 }).toArray();
   }
 
+  async setVerificationStatus(reportReference: string, status: VerificationStatus, updatedAt: Date) {
+    const result = await this.incidents.updateOne(
+      { reportReference },
+      { $set: { verificationStatus: status, updatedAt } },
+    );
+    return result.matchedCount === 1;
+  }
+
   async listPublicFeed(limit: number): Promise<IncidentDocument[]> {
     return this.incidents
-      .find({ extractionStatus: 'completed', extractedDetails: { $ne: null } })
+      .find({ extractionStatus: 'completed', extractedDetails: { $ne: null }, verificationStatus: { $ne: 'dismissed' } })
       .sort({ reportedAt: -1 })
       .limit(limit)
       .toArray();

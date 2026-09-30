@@ -49,6 +49,7 @@ export async function submitIncident(
     description: string;
     submissionId: string;
     isDemoData?: boolean;
+    mapLocationId?: string;
   },
   dependencies: SubmitIncidentDependencies,
 ): Promise<SubmitIncidentResult> {
@@ -69,6 +70,7 @@ export async function submitIncident(
     reportReference,
     reporterId: input.reporterId,
     isDemoData: input.isDemoData ?? false,
+    ...(input.mapLocationId ? { mapLocationId: input.mapLocationId } : {}),
     originalDescription: input.description,
     reportedAt,
     updatedAt: reportedAt,

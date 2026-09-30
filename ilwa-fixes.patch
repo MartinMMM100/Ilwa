@@ -1,0 +1,635 @@
+diff --git a/server/app.ts b/server/app.ts
+index 824c236..4c45311 100644
+--- a/server/app.ts
++++ b/server/app.ts
+@@ -466,6 +466,7 @@ export function createApp(options: AppOptions) {
+           reporterId: request.reporterId!,
+           description: parsedRequest.data.description,
+           submissionId: parsedRequest.data.submissionId,
++          mapLocationId: parsedRequest.data.mapLocationId,
+         },
+         {
+           repository: options.repository,
+@@ -700,6 +701,34 @@ export function createApp(options: AppOptions) {
+     }
+   });
+ 
++  app.patch('/api/admin/incidents/:reportReference/verification', async (request, response) => {
++    const status: unknown = request.body?.status;
++    if (status !== 'verified' && status !== 'dismissed' && status !== 'unverified') {
++      response.status(400).json({
++        error: { code: 'INVALID_STATUS', message: 'Status must be verified, dismissed or unverified.' },
++      });
++      return;
++    }
++    if (!options.repository.setVerificationStatus) {
++      response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: 'Not supported by this repository.' } });
++      return;
++    }
++    try {
++      const found = await options.repository.setVerificationStatus(
++        request.params.reportReference,
++        status,
++        new Date(),
++      );
++      if (!found) {
++        response.status(404).json({ error: { code: 'NOT_FOUND', message: 'Incident not found.' } });
++        return;
++      }
++      response.status(200).json({ reportReference: request.params.reportReference, verificationStatus: status });
++    } catch {
++      response.status(500).json({ error: { code: 'UPDATE_FAILED', message: 'The status could not be updated.' } });
++    }
++  });
++
+   app.get('/api/admin/incidents', async (_request, response) => {
+     try {
+       if (!options.repository.listAdminIncidents) {
+diff --git a/server/incidents/model.ts b/server/incidents/model.ts
+index 36a298c..2649020 100644
+--- a/server/incidents/model.ts
++++ b/server/incidents/model.ts
+@@ -3,6 +3,7 @@ import type { ObjectId } from 'mongodb';
+ import type { IncidentDetails } from './schema';
+ import type { ThreatAssessmentMethod, ThreatLevel } from './threatAssessment';
+ 
++export type VerificationStatus = 'unverified' | 'verified' | 'dismissed';
+ export type ExtractionStatus = 'pending' | 'completed' | 'failed';
+ export type ExtractionMethod = 'mock-v1' | 'openai-responses-v1';
+ 
+@@ -18,11 +19,12 @@ export type IncidentDocument = {
+   reportReference: string;
+   reporterId: string;
+   isDemoData?: boolean;
++  mapLocationId?: string;
+   originalDescription: string;
+   reportedAt: Date;
+   updatedAt: Date;
+   status: 'submitted';
+-  verificationStatus: 'unverified';
++  verificationStatus: VerificationStatus;
+   threatLevel: ThreatLevel;
+   threatAssessmentMethod: ThreatAssessmentMethod | null;
+   threatAssessedAt: Date | null;
+@@ -68,4 +70,9 @@ export interface IncidentRepository {
+   ): Promise<boolean>;
+   listPublicFeed(limit: number): Promise<IncidentDocument[]>;
+   listAdminIncidents?(): Promise<IncidentDocument[]>;
++  setVerificationStatus?(
++    reportReference: string,
++    status: VerificationStatus,
++    updatedAt: Date,
++  ): Promise<boolean>;
+ }
+diff --git a/server/incidents/mongoRepository.ts b/server/incidents/mongoRepository.ts
+index ef07c9c..406dd90 100644
+--- a/server/incidents/mongoRepository.ts
++++ b/server/incidents/mongoRepository.ts
+@@ -6,6 +6,7 @@ import type {
+   IncidentPhotoMetadata,
+   IncidentRepository,
+   StoredIncident,
++  VerificationStatus,
+ } from './model';
+ import type { ThreatAssessmentMethod, ThreatLevel } from './threatAssessment';
+ 
+@@ -20,7 +21,8 @@ export class MongoIncidentRepository implements IncidentRepository {
+   constructor(private readonly incidents: Collection<IncidentDocument>) {}
+ 
+   async listMapIncidents(): Promise<IncidentDocument[]> {
+-    return this.incidents.find({ isDemoData: true, extractionStatus: 'completed',
++    return this.incidents.find({ $or: [{ isDemoData: true }, { mapLocationId: { $exists: true } }],
++      extractionStatus: 'completed', verificationStatus: { $ne: 'dismissed' },
+       reportedAt: { $gte: new Date(Date.now() - 30 * 86_400_000) } }).toArray();
+   }
+ 
+@@ -126,9 +128,17 @@ export class MongoIncidentRepository implements IncidentRepository {
+     return this.incidents.find({}).sort({ reportedAt: -1 }).toArray();
+   }
+ 
++  async setVerificationStatus(reportReference: string, status: VerificationStatus, updatedAt: Date) {
++    const result = await this.incidents.updateOne(
++      { reportReference },
++      { $set: { verificationStatus: status, updatedAt } },
++    );
++    return result.matchedCount === 1;
++  }
++
+   async listPublicFeed(limit: number): Promise<IncidentDocument[]> {
+     return this.incidents
+-      .find({ extractionStatus: 'completed', extractedDetails: { $ne: null } })
++      .find({ extractionStatus: 'completed', extractedDetails: { $ne: null }, verificationStatus: { $ne: 'dismissed' } })
+       .sort({ reportedAt: -1 })
+       .limit(limit)
+       .toArray();
+diff --git a/server/incidents/publicFeed.ts b/server/incidents/publicFeed.ts
+index 07da5c2..f6adc3a 100644
+--- a/server/incidents/publicFeed.ts
++++ b/server/incidents/publicFeed.ts
+@@ -20,7 +20,7 @@ export type PublicFeedItem = {
+   };
+   photoUrl: string | null;
+   reportedAt: string;
+-  verificationStatus: 'unverified';
++  verificationStatus: 'unverified' | 'verified';
+   threatLevel: ThreatLevel;
+   isDemoData: boolean;
+ };
+@@ -40,7 +40,11 @@ const categoryPresentation: Record<
+ };
+ 
+ export function toPublicFeedItem(incident: IncidentDocument): PublicFeedItem | null {
+-  if (incident.extractionStatus !== 'completed' || !incident.extractedDetails) {
++  if (
++    incident.extractionStatus !== 'completed' ||
++    !incident.extractedDetails ||
++    incident.verificationStatus === 'dismissed'
++  ) {
+     return null;
+   }
+ 
+diff --git a/server/incidents/schema.ts b/server/incidents/schema.ts
+index 79b5609..1f19fee 100644
+--- a/server/incidents/schema.ts
++++ b/server/incidents/schema.ts
+@@ -1,5 +1,7 @@
+ import { z } from 'zod';
+ 
++import { findDemoLocationById } from '../map/demoLocations';
++
+ export const incidentRequestSchema = z
+   .object({
+     description: z
+@@ -14,6 +16,10 @@ export const incidentRequestSchema = z
+         /^[A-Za-z0-9][A-Za-z0-9._:-]*$/,
+         'Submission identifier contains unsupported characters.',
+       ),
++    mapLocationId: z
++      .string()
++      .refine((id) => findDemoLocationById(id) !== undefined, 'Unknown map location.')
++      .optional(),
+   })
+   .strict();
+ 
+diff --git a/server/incidents/service.ts b/server/incidents/service.ts
+index 5a672d4..71447ad 100644
+--- a/server/incidents/service.ts
++++ b/server/incidents/service.ts
+@@ -49,6 +49,7 @@ export async function submitIncident(
+     description: string;
+     submissionId: string;
+     isDemoData?: boolean;
++    mapLocationId?: string;
+   },
+   dependencies: SubmitIncidentDependencies,
+ ): Promise<SubmitIncidentResult> {
+@@ -69,6 +70,7 @@ export async function submitIncident(
+     reportReference,
+     reporterId: input.reporterId,
+     isDemoData: input.isDemoData ?? false,
++    ...(input.mapLocationId ? { mapLocationId: input.mapLocationId } : {}),
+     originalDescription: input.description,
+     reportedAt,
+     updatedAt: reportedAt,
+diff --git a/server/map/aggregate.ts b/server/map/aggregate.ts
+index ae6040b..df2cae8 100644
+--- a/server/map/aggregate.ts
++++ b/server/map/aggregate.ts
+@@ -1,6 +1,6 @@
+ import type { AreaId, ConcernZone, MapSnapshot } from '../../shared/safetyMap';
+ import type { IncidentDocument } from '../incidents/model';
+-import { resolveDemoLocation } from './demoLocations';
++import { findDemoLocationById, resolveDemoLocation } from './demoLocations';
+ 
+ const DAY = 86_400_000;
+ const weights: Record<string, number> = { robbery: 5, assault: 5, vehicle_theft: 3, theft: 2, vandalism: 1, suspicious_activity: 1, infrastructure_fault: 1, other_unclear: 0.5 };
+@@ -8,11 +8,13 @@ const weights: Record<string, number> = { robbery: 5, assault: 5, vehicle_theft:
+ export function aggregateDemoMap(incidents: IncidentDocument[], areaId: AreaId, now = new Date()): MapSnapshot {
+   const grouped = new Map<string, ConcernZone>();
+   if (areaId === 'braamfontein') for (const incident of incidents) {
+-    // Real, private, incomplete and stale reports are never used by this demo endpoint.
+-    if (incident.isDemoData !== true || incident.extractionStatus !== 'completed' || !incident.extractedDetails) continue;
++    // Only demo reports, or real reports the reporter pinned to a known landmark, are used.
++    // Raw text, reporter ids and unpinned real reports never reach the map.
++    if ((incident.isDemoData !== true && !incident.mapLocationId) || incident.extractionStatus !== 'completed' || !incident.extractedDetails) continue;
+     const age = now.getTime() - new Date(incident.reportedAt).getTime();
+     if (!Number.isFinite(age) || age < 0 || age > 30 * DAY) continue;
+-    const location = resolveDemoLocation(incident.extractedDetails.locationText);
++    const location = findDemoLocationById(incident.mapLocationId) ??
++      (incident.isDemoData === true ? resolveDemoLocation(incident.extractedDetails.locationText) : undefined);
+     if (!location) continue;
+     const zone = grouped.get(location.id) ?? {
+       id: location.id, label: location.label, latitude: location.latitude, longitude: location.longitude,
+diff --git a/server/map/demoLocations.ts b/server/map/demoLocations.ts
+index 1cf1876..da28239 100644
+--- a/server/map/demoLocations.ts
++++ b/server/map/demoLocations.ts
+@@ -9,6 +9,9 @@ export const demoLocations = [
+   { id: 'civic', match: 'Civic Boulevard', label: 'Civic precinct', latitude: -26.1915, longitude: 28.0414 },
+   { id: 'constitution-hill', match: 'Constitution Hill', label: 'Constitution Hill precinct', latitude: -26.1889, longitude: 28.0425 },
+ ] as const;
++export function findDemoLocationById(id: string | null | undefined) {
++  return demoLocations.find((location) => location.id === id);
++}
+ export function resolveDemoLocation(text: string | null | undefined) {
+   return demoLocations.find((location) => text?.toLowerCase().includes(location.match.toLowerCase()));
+ }
+diff --git a/server/test/adminIncidents.test.ts b/server/test/adminIncidents.test.ts
+index 14c491b..80e8f99 100644
+--- a/server/test/adminIncidents.test.ts
++++ b/server/test/adminIncidents.test.ts
+@@ -102,3 +102,23 @@ async function withServer(server: Server, callback: (baseUrl: string) => Promise
+     });
+   }
+ }
++
++test('admin can verify and dismiss a report; dismissed reports leave the feed and map', async () => {
++  const repository = new TestIncidentRepository();
++  const now = new Date();
++  await repository.insertPending({
++    submissionId: 'verify-1', reportReference: 'ILWA-VERIFY-1', reporterId: 'r', isDemoData: true,
++    originalDescription: 'x', reportedAt: now, updatedAt: now, status: 'submitted',
++    verificationStatus: 'unverified', extractionStatus: 'completed', threatLevel: 'high',
++    threatAssessmentMethod: 'rules-v1', threatAssessedAt: now, extractionMethod: 'mock-v1',
++    extractionModel: null, extractionFixtureMatched: true,
++    extractedDetails: { category: 'robbery', locationText: 'near Park Station', timeText: null,
++      itemsTaken: [], offenderCount: null, weaponReported: null, injuriesReported: null, isOngoing: null },
++  });
++  assert.equal(await repository.setVerificationStatus('ILWA-VERIFY-1', 'verified', now), true);
++  assert.equal((await repository.listPublicFeed(10)).length, 1);
++  assert.equal(await repository.setVerificationStatus('ILWA-VERIFY-1', 'dismissed', now), true);
++  assert.equal((await repository.listPublicFeed(10)).length, 0);
++  assert.equal((await repository.listMapIncidents()).length, 0);
++  assert.equal(await repository.setVerificationStatus('NOPE', 'verified', now), false);
++});
+diff --git a/server/test/map.test.ts b/server/test/map.test.ts
+index 20fc217..201ac22 100644
+--- a/server/test/map.test.ts
++++ b/server/test/map.test.ts
+@@ -40,3 +40,15 @@ test('demo concern strength decays with age and increases with clustered reports
+   assert.equal(cluster.concern, 'higher');
+   assert.ok(cluster.radiusMeters > fresh.radiusMeters);
+ });
++
++test('pinned real reports reach the map; unpinned real reports and bad ids do not', async () => {
++  const { landmarkOptions } = await import('../../shared/safetyMap');
++  const { demoLocations } = await import('../map/demoLocations');
++  assert.deepEqual(landmarkOptions.map((p) => p.id), demoLocations.map((l) => l.id));
++
++  const pinned = aggregateDemoMap([incident({ isDemoData: false, mapLocationId: 'wits' })], 'braamfontein', now);
++  assert.equal(pinned.zones.length, 1);
++  assert.equal(pinned.zones[0]?.id, 'wits');
++  assert.equal(aggregateDemoMap([incident({ isDemoData: false })], 'braamfontein', now).zones.length, 0);
++  assert.equal(aggregateDemoMap([incident({ isDemoData: false, mapLocationId: 'nowhere' })], 'braamfontein', now).zones.length, 0);
++});
+diff --git a/server/test/testRepository.ts b/server/test/testRepository.ts
+index a1468c7..4e0ef68 100644
+--- a/server/test/testRepository.ts
++++ b/server/test/testRepository.ts
+@@ -5,6 +5,7 @@ import type {
+   IncidentPhotoMetadata,
+   IncidentRepository,
+   StoredIncident,
++  VerificationStatus,
+ } from '../incidents/model';
+ import type {
+   ThreatAssessmentMethod,
+@@ -15,7 +16,11 @@ export class TestIncidentRepository implements IncidentRepository {
+   readonly documents = new Map<string, IncidentDocument>();
+ 
+   async listMapIncidents(): Promise<IncidentDocument[]> {
+-    return [...this.documents.values()].filter((item) => item.isDemoData === true);
++    return [...this.documents.values()].filter(
++      (item) =>
++        (item.isDemoData === true || item.mapLocationId !== undefined) &&
++        item.verificationStatus !== 'dismissed',
++    );
+   }
+ 
+   async ensureIndexes() {}
+@@ -97,13 +102,23 @@ export class TestIncidentRepository implements IncidentRepository {
+     return [...this.documents.values()]
+       .filter(
+         (incident) =>
+-          incident.extractionStatus === 'completed' && incident.extractedDetails !== null,
++          incident.extractionStatus === 'completed' &&
++          incident.extractedDetails !== null &&
++          incident.verificationStatus !== 'dismissed',
+       )
+       .map(cloneIncident)
+       .sort((a, b) => b.reportedAt.getTime() - a.reportedAt.getTime())
+       .slice(0, limit);
+   }
+ 
++  async setVerificationStatus(reportReference: string, status: VerificationStatus, updatedAt: Date) {
++    const incident = [...this.documents.values()].find((c) => c.reportReference === reportReference);
++    if (!incident) return false;
++    incident.verificationStatus = status;
++    incident.updatedAt = updatedAt;
++    return true;
++  }
++
+   private findByReference(reportReference: string) {
+     const incident = [...this.documents.values()].find(
+       (candidate) => candidate.reportReference === reportReference,
+diff --git a/shared/safetyMap.ts b/shared/safetyMap.ts
+index 090f70c..7d035f3 100644
+--- a/shared/safetyMap.ts
++++ b/shared/safetyMap.ts
+@@ -9,6 +9,18 @@ export const suburbs = [
+   { id: 'melville', name: 'Melville', latitude: -26.1750, longitude: 28.0090 },
+   { id: 'fordsburg', name: 'Fordsburg', latitude: -26.2040, longitude: 28.0170 },
+ ] as const;
++// Places a reporter can pin a report to. Ids must match server/map/demoLocations.ts
++// (a test checks this); the server looks up coordinates, clients never send them.
++export const landmarkOptions = [
++  { id: 'park-station', label: 'Park Station' },
++  { id: 'juta-street', label: 'Juta Street' },
++  { id: 'de-korte', label: 'De Korte Street' },
++  { id: 'library', label: 'Braamfontein Library' },
++  { id: 'wits', label: 'Wits entrance' },
++  { id: 'smit', label: 'Smit Street' },
++  { id: 'civic', label: 'Civic Boulevard' },
++  { id: 'constitution-hill', label: 'Constitution Hill' },
++] as const;
+ export type Suburb = (typeof suburbs)[number];
+ export type AreaId = Suburb['id'];
+ export const concernLabels = { lower: 'Lower reported concern', elevated: 'Elevated reported concern', higher: 'Higher reported concern' };
+diff --git a/src/api/adminIncidents.ts b/src/api/adminIncidents.ts
+index f746faf..06658f8 100644
+--- a/src/api/adminIncidents.ts
++++ b/src/api/adminIncidents.ts
+@@ -31,7 +31,7 @@ export type AdminIncident = {
+   reportedAt: string;
+   updatedAt: string;
+   status: 'submitted';
+-  verificationStatus: 'unverified';
++  verificationStatus: 'unverified' | 'verified' | 'dismissed';
+   extractionStatus: 'pending' | 'completed' | 'failed';
+   extractionMethod: 'mock-v1' | 'openai-responses-v1';
+   extractionModel: string | null;
+@@ -71,3 +71,17 @@ function readErrorMessage(value: unknown): string | null {
+   }
+   return null;
+ }
++
++export async function setIncidentVerification(
++  reportReference: string,
++  status: AdminIncident['verificationStatus'],
++): Promise<void> {
++  const response = await fetch(
++    `${getApiBaseUrl()}/api/admin/incidents/${encodeURIComponent(reportReference)}/verification`,
++    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) },
++  );
++  if (!response.ok) {
++    const errorBody: unknown = await response.json().catch(() => null);
++    throw new Error(readErrorMessage(errorBody) ?? 'The status could not be updated.');
++  }
++}
+diff --git a/src/api/feed.ts b/src/api/feed.ts
+index a7d2466..921be36 100644
+--- a/src/api/feed.ts
++++ b/src/api/feed.ts
+@@ -19,7 +19,7 @@ export type PublicFeedItem = {
+   };
+   photoUrl: string | null;
+   reportedAt: string;
+-  verificationStatus: 'unverified';
++  verificationStatus: 'unverified' | 'verified';
+   threatLevel: PublicFeedThreatLevel;
+   isDemoData: boolean;
+ };
+@@ -71,7 +71,7 @@ function isFeedResponse(value: unknown): value is { items: PublicFeedItem[] } {
+       typeof item.reportedAt === 'string' &&
+       !Number.isNaN(Date.parse(item.reportedAt)) &&
+       'verificationStatus' in item &&
+-      item.verificationStatus === 'unverified' &&
++      (item.verificationStatus === 'unverified' || item.verificationStatus === 'verified') &&
+       'threatLevel' in item &&
+       ['unknown', 'low', 'medium', 'high', 'critical'].includes(String(item.threatLevel)) &&
+       'isDemoData' in item &&
+diff --git a/src/api/incidents.ts b/src/api/incidents.ts
+index 6824bb6..3f9fa96 100644
+--- a/src/api/incidents.ts
++++ b/src/api/incidents.ts
+@@ -22,12 +22,13 @@ export function createSubmissionId() {
+ export async function submitIncident(
+   description: string,
+   submissionId: string,
++  mapLocationId?: string | null,
+ ): Promise<IncidentSubmissionResult> {
+   const apiBaseUrl = getApiBaseUrl();
+   const response = await fetch(`${apiBaseUrl}/api/incidents`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+-    body: JSON.stringify({ description, submissionId }),
++    body: JSON.stringify({ description, submissionId, ...(mapLocationId ? { mapLocationId } : {}) }),
+   });
+ 
+   const payload: unknown = await response.json().catch(() => null);
+diff --git a/src/components/AdminIncidentModal.tsx b/src/components/AdminIncidentModal.tsx
+index d259d7e..50dc8a4 100644
+--- a/src/components/AdminIncidentModal.tsx
++++ b/src/components/AdminIncidentModal.tsx
+@@ -5,11 +5,12 @@ import type { AdminIncident } from '../api/adminIncidents';
+ import { colors, shadow } from '../theme';
+ 
+ type AdminIncidentModalProps = {
++  onSetStatus?: (status: 'verified' | 'dismissed') => void;
+   incident: AdminIncident | null;
+   onClose: () => void;
+ };
+ 
+-export function AdminIncidentModal({ incident, onClose }: AdminIncidentModalProps) {
++export function AdminIncidentModal({ incident, onClose, onSetStatus }: AdminIncidentModalProps) {
+   if (!incident) {
+     return null;
+   }
+@@ -163,6 +164,26 @@ export function AdminIncidentModal({ incident, onClose }: AdminIncidentModalProp
+           </ScrollView>
+ 
+           <View style={styles.modalFooter}>
++            {onSetStatus ? (
++              <View style={styles.reviewRow}>
++                <Pressable
++                  accessibilityRole="button"
++                  onPress={() => onSetStatus('verified')}
++                  disabled={incident.verificationStatus === 'verified'}
++                  style={({ pressed }) => [styles.reviewBtn, styles.verifyBtn, (pressed || incident.verificationStatus === 'verified') && styles.pressed]}
++                >
++                  <Text style={styles.reviewBtnText}>{incident.verificationStatus === 'verified' ? 'Verified' : 'Verify'}</Text>
++                </Pressable>
++                <Pressable
++                  accessibilityRole="button"
++                  onPress={() => onSetStatus('dismissed')}
++                  disabled={incident.verificationStatus === 'dismissed'}
++                  style={({ pressed }) => [styles.reviewBtn, styles.dismissBtn, (pressed || incident.verificationStatus === 'dismissed') && styles.pressed]}
++                >
++                  <Text style={styles.reviewBtnText}>{incident.verificationStatus === 'dismissed' ? 'Dismissed' : 'Dismiss'}</Text>
++                </Pressable>
++              </View>
++            ) : null}
+             <Pressable
+               accessibilityRole="button"
+               onPress={onClose}
+@@ -346,6 +367,11 @@ const styles = StyleSheet.create({
+     paddingHorizontal: 16,
+     paddingTop: 10,
+   },
++  reviewRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
++  reviewBtn: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
++  verifyBtn: { backgroundColor: colors.green },
++  dismissBtn: { backgroundColor: colors.red },
++  reviewBtnText: { color: colors.white, fontSize: 14, fontWeight: '800' },
+   doneBtn: {
+     backgroundColor: colors.navy,
+     borderRadius: 12,
+diff --git a/src/components/FeedStoryModal.tsx b/src/components/FeedStoryModal.tsx
+index 8dcfb95..5ff83be 100644
+--- a/src/components/FeedStoryModal.tsx
++++ b/src/components/FeedStoryModal.tsx
+@@ -54,7 +54,11 @@ export function FeedStoryModal({ story, onClose }: FeedStoryModalProps) {
+ 
+             <View style={styles.badges}>
+               <Badge label={story.category.toUpperCase()} background={colors.redSoft} color={colors.red} />
+-              <Badge label="UNVERIFIED" background="#EAECF0" color="#475467" />
++              {story.verificationStatus === 'verified' ? (
++                <Badge label="VERIFIED" background="#DCF8E7" color="#0B9B45" />
++              ) : (
++                <Badge label="UNVERIFIED" background="#EAECF0" color="#475467" />
++              )}
+               <Badge
+                 label={`${story.threatLevel.toUpperCase()} THREAT`}
+                 background={colors.goldSoft}
+diff --git a/src/screens/AdminScreen.tsx b/src/screens/AdminScreen.tsx
+index b00acbb..0161c39 100644
+--- a/src/screens/AdminScreen.tsx
++++ b/src/screens/AdminScreen.tsx
+@@ -15,6 +15,7 @@ import {
+   type AdminIncident,
+   type AdminIncidentCategory,
+   fetchAdminIncidents,
++  setIncidentVerification,
+ } from '../api/adminIncidents';
+ import { AdminIncidentModal } from '../components/AdminIncidentModal';
+ import { AdminStatsGrid } from '../components/AdminStatsGrid';
+@@ -336,6 +337,17 @@ export function AdminScreen({ navigate }: AdminScreenProps) {
+       <AdminIncidentModal
+         incident={selectedIncident}
+         onClose={() => setSelectedIncident(null)}
++        onSetStatus={async (status) => {
++          if (!selectedIncident) return;
++          try {
++            await setIncidentVerification(selectedIncident.reportReference, status);
++            const updated = { ...selectedIncident, verificationStatus: status };
++            setSelectedIncident(updated);
++            setIncidents((list) => list.map((item) => (item.reportReference === updated.reportReference ? updated : item)));
++          } catch {
++            // Leave the record as it was; the badge in the modal shows the unchanged status.
++          }
++        }}
+       />
+     </View>
+   );
+diff --git a/src/screens/FeedScreen.tsx b/src/screens/FeedScreen.tsx
+index 0137795..cb4773b 100644
+--- a/src/screens/FeedScreen.tsx
++++ b/src/screens/FeedScreen.tsx
+@@ -203,7 +203,7 @@ function HeroStory({ story, onPress }: { story: PublicFeedItem; onPress: () => v
+           <Text style={styles.heroCategory}>{story.category.toUpperCase()}</Text>
+           <Text style={styles.heroTitle}>{story.title}</Text>
+           <Text style={styles.heroMeta}>
+-            ILWA COMMUNITY • {formatRelativeAge(story.reportedAt)} • UNVERIFIED
++            ILWA COMMUNITY • {formatRelativeAge(story.reportedAt)} • {story.verificationStatus === 'verified' ? 'VERIFIED' : 'UNVERIFIED'}
+             {story.isDemoData ? ' • DEMO' : ''}
+           </Text>
+         </View>
+@@ -233,7 +233,7 @@ function StoryCard({ story, onPress }: { story: PublicFeedItem; onPress: () => v
+         <View style={styles.storyLabelRow}>
+           <Text style={[styles.storyCategory, { color: presentation.color }]}>{story.category}</Text>
+           <View style={styles.unverifiedPill}>
+-            <Text style={styles.unverifiedText}>UNVERIFIED</Text>
++            <Text style={styles.unverifiedText}>{story.verificationStatus === 'verified' ? 'VERIFIED' : 'UNVERIFIED'}</Text>
+           </View>
+           {story.isDemoData ? (
+             <View style={styles.demoPill}>
+diff --git a/src/screens/ReportScreen.tsx b/src/screens/ReportScreen.tsx
+index b64e2f1..e4dfec9 100644
+--- a/src/screens/ReportScreen.tsx
++++ b/src/screens/ReportScreen.tsx
+@@ -41,6 +41,7 @@ import {
+ import { transcribeIncidentAudio } from '../api/transcriptions';
+ import { AppHeader } from '../components/AppHeader';
+ import { SuburbPicker } from '../components/SuburbPicker';
++import { landmarkOptions } from '../../shared/safetyMap';
+ import { useAreaMap } from '../map/AreaProvider';
+ import { colors } from '../theme';
+ 
+@@ -59,6 +60,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
+   const { area } = useAreaMap();
+   const [inputMode, setInputMode] = useState<InputMode>('text');
+   const [description, setDescription] = useState('');
++  const [mapLocationId, setMapLocationId] = useState<string | null>(null);
+   const [attachment, setAttachment] = useState<IncidentPhotoAttachment | null>(null);
+   const [photoUploadStatus, setPhotoUploadStatus] = useState<'uploaded' | 'failed' | null>(null);
+   const [voiceUri, setVoiceUri] = useState<string | null>(null);
+@@ -222,7 +224,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
+     setErrorMessage(null);
+ 
+     try {
+-      const report = await submitIncident(description, submissionId);
++      const report = await submitIncident(description, submissionId, mapLocationId);
+       if (attachment) {
+         try {
+           await uploadIncidentPhoto(report.reference, attachment);
+@@ -256,6 +258,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
+ 
+   const startAnotherReport = () => {
+     setDescription('');
++    setMapLocationId(null);
+     setInputMode('text');
+     setAttachment(null);
+     setPhotoUploadStatus(null);
+@@ -502,6 +505,30 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
+           />
+         </Field>
+ 
++        <Field label="Where did it happen?" helper="Optional · shows the report on the map">
++          <View style={styles.placeRow}>
++            {landmarkOptions.map((place) => {
++              const selected = mapLocationId === place.id;
++              const locked = isSubmitting || isTranscribing || Boolean(savedReport);
++              return (
++                <Pressable
++                  key={place.id}
++                  accessibilityRole="button"
++                  accessibilityState={{ selected }}
++                  disabled={locked}
++                  onPress={() => {
++                    setMapLocationId(selected ? null : place.id);
++                    setSubmissionId(createSubmissionId());
++                  }}
++                  style={[styles.placeChip, selected && styles.placeChipSelected, locked && styles.buttonDisabled]}
++                >
++                  <Text style={[styles.placeChipText, selected && styles.placeChipTextSelected]}>{place.label}</Text>
++                </Pressable>
++              );
++            })}
++          </View>
++        </Field>
++
+         <Field label="Photo or attachment" helper="Optional · up to 5 MB">
+           <Pressable
+             accessibilityRole="button"
+@@ -966,6 +993,11 @@ const styles = StyleSheet.create({
+   },
+   summaryError: { borderColor: '#C9414E' },
+   summaryInput: { minHeight: 180, padding: 12, color: colors.ink, fontSize: 13, lineHeight: 19 },
++  placeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
++  placeChip: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },
++  placeChipSelected: { backgroundColor: colors.navy, borderColor: colors.navy },
++  placeChipText: { color: colors.navy, fontSize: 12, fontWeight: '700' },
++  placeChipTextSelected: { color: colors.white },
+   counter: { position: 'absolute', right: 9, bottom: 7, color: colors.muted, fontSize: 9 },
+   recordButton: {
+     minHeight: 74,

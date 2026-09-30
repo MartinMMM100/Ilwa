@@ -40,3 +40,15 @@ test('demo concern strength decays with age and increases with clustered reports
   assert.equal(cluster.concern, 'higher');
   assert.ok(cluster.radiusMeters > fresh.radiusMeters);
 });
+
+test('pinned real reports reach the map; unpinned real reports and bad ids do not', async () => {
+  const { landmarkOptions } = await import('../../shared/safetyMap');
+  const { demoLocations } = await import('../map/demoLocations');
+  assert.deepEqual(landmarkOptions.map((p) => p.id), demoLocations.map((l) => l.id));
+
+  const pinned = aggregateDemoMap([incident({ isDemoData: false, mapLocationId: 'wits' })], 'braamfontein', now);
+  assert.equal(pinned.zones.length, 1);
+  assert.equal(pinned.zones[0]?.id, 'wits');
+  assert.equal(aggregateDemoMap([incident({ isDemoData: false })], 'braamfontein', now).zones.length, 0);
+  assert.equal(aggregateDemoMap([incident({ isDemoData: false, mapLocationId: 'nowhere' })], 'braamfontein', now).zones.length, 0);
+});

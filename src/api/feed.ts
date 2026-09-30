@@ -19,7 +19,7 @@ export type PublicFeedItem = {
   };
   photoUrl: string | null;
   reportedAt: string;
-  verificationStatus: 'unverified';
+  verificationStatus: 'unverified' | 'verified';
   threatLevel: PublicFeedThreatLevel;
   isDemoData: boolean;
 };
@@ -71,7 +71,7 @@ function isFeedResponse(value: unknown): value is { items: PublicFeedItem[] } {
       typeof item.reportedAt === 'string' &&
       !Number.isNaN(Date.parse(item.reportedAt)) &&
       'verificationStatus' in item &&
-      item.verificationStatus === 'unverified' &&
+      (item.verificationStatus === 'unverified' || item.verificationStatus === 'verified') &&
       'threatLevel' in item &&
       ['unknown', 'low', 'medium', 'high', 'critical'].includes(String(item.threatLevel)) &&
       'isDemoData' in item &&

@@ -3,6 +3,7 @@ import type { ObjectId } from 'mongodb';
 import type { IncidentDetails } from './schema';
 import type { ThreatAssessmentMethod, ThreatLevel } from './threatAssessment';
 
+export type VerificationStatus = 'unverified' | 'verified' | 'dismissed';
 export type ExtractionStatus = 'pending' | 'completed' | 'failed';
 export type ExtractionMethod = 'mock-v1' | 'openai-responses-v1';
 
@@ -18,11 +19,12 @@ export type IncidentDocument = {
   reportReference: string;
   reporterId: string;
   isDemoData?: boolean;
+  mapLocationId?: string;
   originalDescription: string;
   reportedAt: Date;
   updatedAt: Date;
   status: 'submitted';
-  verificationStatus: 'unverified';
+  verificationStatus: VerificationStatus;
   threatLevel: ThreatLevel;
   threatAssessmentMethod: ThreatAssessmentMethod | null;
   threatAssessedAt: Date | null;
@@ -68,4 +70,9 @@ export interface IncidentRepository {
   ): Promise<boolean>;
   listPublicFeed(limit: number): Promise<IncidentDocument[]>;
   listAdminIncidents?(): Promise<IncidentDocument[]>;
+  setVerificationStatus?(
+    reportReference: string,
+    status: VerificationStatus,
+    updatedAt: Date,
+  ): Promise<boolean>;
 }

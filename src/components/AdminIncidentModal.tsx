@@ -5,11 +5,12 @@ import type { AdminIncident } from '../api/adminIncidents';
 import { colors, shadow } from '../theme';
 
 type AdminIncidentModalProps = {
+  onSetStatus?: (status: 'verified' | 'dismissed') => void;
   incident: AdminIncident | null;
   onClose: () => void;
 };
 
-export function AdminIncidentModal({ incident, onClose }: AdminIncidentModalProps) {
+export function AdminIncidentModal({ incident, onClose, onSetStatus }: AdminIncidentModalProps) {
   if (!incident) {
     return null;
   }
@@ -163,6 +164,26 @@ export function AdminIncidentModal({ incident, onClose }: AdminIncidentModalProp
           </ScrollView>
 
           <View style={styles.modalFooter}>
+            {onSetStatus ? (
+              <View style={styles.reviewRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => onSetStatus('verified')}
+                  disabled={incident.verificationStatus === 'verified'}
+                  style={({ pressed }) => [styles.reviewBtn, styles.verifyBtn, (pressed || incident.verificationStatus === 'verified') && styles.pressed]}
+                >
+                  <Text style={styles.reviewBtnText}>{incident.verificationStatus === 'verified' ? 'Verified' : 'Verify'}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => onSetStatus('dismissed')}
+                  disabled={incident.verificationStatus === 'dismissed'}
+                  style={({ pressed }) => [styles.reviewBtn, styles.dismissBtn, (pressed || incident.verificationStatus === 'dismissed') && styles.pressed]}
+                >
+                  <Text style={styles.reviewBtnText}>{incident.verificationStatus === 'dismissed' ? 'Dismissed' : 'Dismiss'}</Text>
+                </Pressable>
+              </View>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               onPress={onClose}
@@ -346,6 +367,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
   },
+  reviewRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  reviewBtn: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  verifyBtn: { backgroundColor: colors.green },
+  dismissBtn: { backgroundColor: colors.red },
+  reviewBtnText: { color: colors.white, fontSize: 14, fontWeight: '800' },
   doneBtn: {
     backgroundColor: colors.navy,
     borderRadius: 12,

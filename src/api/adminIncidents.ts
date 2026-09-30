@@ -31,7 +31,7 @@ export type AdminIncident = {
   reportedAt: string;
   updatedAt: string;
   status: 'submitted';
-  verificationStatus: 'unverified';
+  verificationStatus: 'unverified' | 'verified' | 'dismissed';
   extractionStatus: 'pending' | 'completed' | 'failed';
   extractionMethod: 'mock-v1' | 'openai-responses-v1';
   extractionModel: string | null;
@@ -70,4 +70,18 @@ function readErrorMessage(value: unknown): string | null {
     return value.error.message;
   }
   return null;
+}
+
+export async function setIncidentVerification(
+  reportReference: string,
+  status: AdminIncident['verificationStatus'],
+): Promise<void> {
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/admin/incidents/${encodeURIComponent(reportReference)}/verification`,
+    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) },
+  );
+  if (!response.ok) {
+    const errorBody: unknown = await response.json().catch(() => null);
+    throw new Error(readErrorMessage(errorBody) ?? 'The status could not be updated.');
+  }
 }

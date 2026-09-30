@@ -9,6 +9,9 @@ export const demoLocations = [
   { id: 'civic', match: 'Civic Boulevard', label: 'Civic precinct', latitude: -26.1915, longitude: 28.0414 },
   { id: 'constitution-hill', match: 'Constitution Hill', label: 'Constitution Hill precinct', latitude: -26.1889, longitude: 28.0425 },
 ] as const;
+export function findDemoLocationById(id: string | null | undefined) {
+  return demoLocations.find((location) => location.id === id);
+}
 export function resolveDemoLocation(text: string | null | undefined) {
   return demoLocations.find((location) => text?.toLowerCase().includes(location.match.toLowerCase()));
 }

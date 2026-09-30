@@ -15,6 +15,7 @@ import {
   type AdminIncident,
   type AdminIncidentCategory,
   fetchAdminIncidents,
+  setIncidentVerification,
 } from '../api/adminIncidents';
 import { AdminIncidentModal } from '../components/AdminIncidentModal';
 import { AdminStatsGrid } from '../components/AdminStatsGrid';
@@ -336,6 +337,17 @@ export function AdminScreen({ navigate }: AdminScreenProps) {
       <AdminIncidentModal
         incident={selectedIncident}
         onClose={() => setSelectedIncident(null)}
+        onSetStatus={async (status) => {
+          if (!selectedIncident) return;
+          try {
+            await setIncidentVerification(selectedIncident.reportReference, status);
+            const updated = { ...selectedIncident, verificationStatus: status };
+            setSelectedIncident(updated);
+            setIncidents((list) => list.map((item) => (item.reportReference === updated.reportReference ? updated : item)));
+          } catch {
+            // Leave the record as it was; the badge in the modal shows the unchanged status.
+          }
+        }}
       />
     </View>
   );

@@ -2,6 +2,11 @@
 export const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 export const MAP_RENDERER_VERSION = '5.12.0';
 
+// Radar intensity. Each zone is 12 stacked rings, so the centre ends up at roughly
+// 1 - (1 - ring)^11 and the outer edge stays at the edge value. Raise both to darken.
+export const ZONE_EDGE_OPACITY = 0.07;
+export const ZONE_RING_OPACITY = 0.09;
+
 export function mapDocument() {
   return `<!doctype html>
 <html><head><meta charset="utf-8">
@@ -40,7 +45,7 @@ export function mapDocument() {
     var features = [], colors = {lower:'#27875B',elevated:'#D39A16',higher:'#D93B37'};
     if (state.visible) (state.zones || []).forEach(function (zone) {
       for (var i=0;i<12;i++) features.push({type:'Feature', properties:{
-        zoneId:zone.id,color:colors[zone.concern],opacity:i===0?0.035:0.055,
+        zoneId:zone.id,color:colors[zone.concern],opacity:i===0?${ZONE_EDGE_OPACITY}:${ZONE_RING_OPACITY},
         selected:zone.id===state.selectedZoneId && i===0
       },geometry:{type:'Polygon',coordinates:[ring(zone,zone.radiusMeters*(1-i/13))]}});
     });

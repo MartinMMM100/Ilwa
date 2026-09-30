@@ -41,6 +41,7 @@ import {
 import { transcribeIncidentAudio } from '../api/transcriptions';
 import { AppHeader } from '../components/AppHeader';
 import { SuburbPicker } from '../components/SuburbPicker';
+import { landmarkOptions } from '../../shared/safetyMap';
 import { useAreaMap } from '../map/AreaProvider';
 import { colors } from '../theme';
 
@@ -59,6 +60,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
   const { area } = useAreaMap();
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [description, setDescription] = useState('');
+  const [mapLocationId, setMapLocationId] = useState<string | null>(null);
   const [attachment, setAttachment] = useState<IncidentPhotoAttachment | null>(null);
   const [photoUploadStatus, setPhotoUploadStatus] = useState<'uploaded' | 'failed' | null>(null);
   const [voiceUri, setVoiceUri] = useState<string | null>(null);
@@ -222,7 +224,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
     setErrorMessage(null);
 
     try {
-      const report = await submitIncident(description, submissionId);
+      const report = await submitIncident(description, submissionId, mapLocationId);
       if (attachment) {
         try {
           await uploadIncidentPhoto(report.reference, attachment);
@@ -256,6 +258,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
 
   const startAnotherReport = () => {
     setDescription('');
+    setMapLocationId(null);
     setInputMode('text');
     setAttachment(null);
     setPhotoUploadStatus(null);
@@ -500,6 +503,30 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
             hasError={Boolean(errorMessage && !savedReport)}
             onChange={updateDescription}
           />
+        </Field>
+
+        <Field label="Where did it happen?" helper="Optional · shows the report on the map">
+          <View style={styles.placeRow}>
+            {landmarkOptions.map((place) => {
+              const selected = mapLocationId === place.id;
+              const locked = isSubmitting || isTranscribing || Boolean(savedReport);
+              return (
+                <Pressable
+                  key={place.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  disabled={locked}
+                  onPress={() => {
+                    setMapLocationId(selected ? null : place.id);
+                    setSubmissionId(createSubmissionId());
+                  }}
+                  style={[styles.placeChip, selected && styles.placeChipSelected, locked && styles.buttonDisabled]}
+                >
+                  <Text style={[styles.placeChipText, selected && styles.placeChipTextSelected]}>{place.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </Field>
 
         <Field label="Photo or attachment" helper="Optional · up to 5 MB">
@@ -966,6 +993,11 @@ const styles = StyleSheet.create({
   },
   summaryError: { borderColor: '#C9414E' },
   summaryInput: { minHeight: 180, padding: 12, color: colors.ink, fontSize: 13, lineHeight: 19 },
+  placeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  placeChip: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },
+  placeChipSelected: { backgroundColor: colors.navy, borderColor: colors.navy },
+  placeChipText: { color: colors.navy, fontSize: 12, fontWeight: '700' },
+  placeChipTextSelected: { color: colors.white },
   counter: { position: 'absolute', right: 9, bottom: 7, color: colors.muted, fontSize: 9 },
   recordButton: {
     minHeight: 74,

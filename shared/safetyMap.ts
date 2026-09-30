@@ -9,6 +9,18 @@ export const suburbs = [
   { id: 'melville', name: 'Melville', latitude: -26.1750, longitude: 28.0090 },
   { id: 'fordsburg', name: 'Fordsburg', latitude: -26.2040, longitude: 28.0170 },
 ] as const;
+// Places a reporter can pin a report to. Ids must match server/map/demoLocations.ts
+// (a test checks this); the server looks up coordinates, clients never send them.
+export const landmarkOptions = [
+  { id: 'park-station', label: 'Park Station' },
+  { id: 'juta-street', label: 'Juta Street' },
+  { id: 'de-korte', label: 'De Korte Street' },
+  { id: 'library', label: 'Braamfontein Library' },
+  { id: 'wits', label: 'Wits entrance' },
+  { id: 'smit', label: 'Smit Street' },
+  { id: 'civic', label: 'Civic Boulevard' },
+  { id: 'constitution-hill', label: 'Constitution Hill' },
+] as const;
 export type Suburb = (typeof suburbs)[number];
 export type AreaId = Suburb['id'];
 export const concernLabels = { lower: 'Lower reported concern', elevated: 'Elevated reported concern', higher: 'Higher reported concern' };

@@ -203,7 +203,7 @@ function HeroStory({ story, onPress }: { story: PublicFeedItem; onPress: () => v
           <Text style={styles.heroCategory}>{story.category.toUpperCase()}</Text>
           <Text style={styles.heroTitle}>{story.title}</Text>
           <Text style={styles.heroMeta}>
-            ILWA COMMUNITY • {formatRelativeAge(story.reportedAt)} • UNVERIFIED
+            ILWA COMMUNITY • {formatRelativeAge(story.reportedAt)} • {story.verificationStatus === 'verified' ? 'VERIFIED' : 'UNVERIFIED'}
             {story.isDemoData ? ' • DEMO' : ''}
           </Text>
         </View>
@@ -233,7 +233,7 @@ function StoryCard({ story, onPress }: { story: PublicFeedItem; onPress: () => v
         <View style={styles.storyLabelRow}>
           <Text style={[styles.storyCategory, { color: presentation.color }]}>{story.category}</Text>
           <View style={styles.unverifiedPill}>
-            <Text style={styles.unverifiedText}>UNVERIFIED</Text>
+            <Text style={styles.unverifiedText}>{story.verificationStatus === 'verified' ? 'VERIFIED' : 'UNVERIFIED'}</Text>
           </View>
           {story.isDemoData ? (
             <View style={styles.demoPill}>

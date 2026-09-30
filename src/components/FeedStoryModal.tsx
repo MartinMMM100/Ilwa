@@ -54,7 +54,11 @@ export function FeedStoryModal({ story, onClose }: FeedStoryModalProps) {
 
             <View style={styles.badges}>
               <Badge label={story.category.toUpperCase()} background={colors.redSoft} color={colors.red} />
-              <Badge label="UNVERIFIED" background="#EAECF0" color="#475467" />
+              {story.verificationStatus === 'verified' ? (
+                <Badge label="VERIFIED" background="#DCF8E7" color="#0B9B45" />
+              ) : (
+                <Badge label="UNVERIFIED" background="#EAECF0" color="#475467" />
+              )}
               <Badge
                 label={`${story.threatLevel.toUpperCase()} THREAT`}
                 background={colors.goldSoft}

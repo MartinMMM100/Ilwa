@@ -27,8 +27,10 @@ export function AreaProvider({ children }: { children: ReactNode }) {
         if (data.areaId !== areaId) throw new Error('The server returned a different area.');
         if (active) { setSnapshot(data); setRequestState({ areaId, loading: false, error: '' }); }
       } catch {
+        // In development, name the address being tried so a phone that cannot reach the API is obvious.
+        const where = __DEV__ ? ` (tried ${getApiBaseUrl() || 'this Metro server'})` : '';
         if (active) { setSnapshot(null); setRequestState({ areaId, loading: false,
-          error: 'Could not load reports. Check your API connection and try again.' }); }
+          error: `Could not load reports. Check your API connection and try again.${where}` }); }
       } finally { clearTimeout(timeout); }
     };
     void load();

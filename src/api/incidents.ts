@@ -22,12 +22,13 @@ export function createSubmissionId() {
 export async function submitIncident(
   description: string,
   submissionId: string,
+  mapLocationId?: string | null,
 ): Promise<IncidentSubmissionResult> {
   const apiBaseUrl = getApiBaseUrl();
   const response = await fetch(`${apiBaseUrl}/api/incidents`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ description, submissionId }),
+    body: JSON.stringify({ description, submissionId, ...(mapLocationId ? { mapLocationId } : {}) }),
   });
 
   const payload: unknown = await response.json().catch(() => null);

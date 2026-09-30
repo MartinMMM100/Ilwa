@@ -102,3 +102,23 @@ async function withServer(server: Server, callback: (baseUrl: string) => Promise
     });
   }
 }
+
+test('admin can verify and dismiss a report; dismissed reports leave the feed and map', async () => {
+  const repository = new TestIncidentRepository();
+  const now = new Date();
+  await repository.insertPending({
+    submissionId: 'verify-1', reportReference: 'ILWA-VERIFY-1', reporterId: 'r', isDemoData: true,
+    originalDescription: 'x', reportedAt: now, updatedAt: now, status: 'submitted',
+    verificationStatus: 'unverified', extractionStatus: 'completed', threatLevel: 'high',
+    threatAssessmentMethod: 'rules-v1', threatAssessedAt: now, extractionMethod: 'mock-v1',
+    extractionModel: null, extractionFixtureMatched: true,
+    extractedDetails: { category: 'robbery', locationText: 'near Park Station', timeText: null,
+      itemsTaken: [], offenderCount: null, weaponReported: null, injuriesReported: null, isOngoing: null },
+  });
+  assert.equal(await repository.setVerificationStatus('ILWA-VERIFY-1', 'verified', now), true);
+  assert.equal((await repository.listPublicFeed(10)).length, 1);
+  assert.equal(await repository.setVerificationStatus('ILWA-VERIFY-1', 'dismissed', now), true);
+  assert.equal((await repository.listPublicFeed(10)).length, 0);
+  assert.equal((await repository.listMapIncidents()).length, 0);
+  assert.equal(await repository.setVerificationStatus('NOPE', 'verified', now), false);
+});

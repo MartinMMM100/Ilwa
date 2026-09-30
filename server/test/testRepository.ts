@@ -5,6 +5,7 @@ import type {
   IncidentPhotoMetadata,
   IncidentRepository,
   StoredIncident,
+  VerificationStatus,
 } from '../incidents/model';
 import type {
   ThreatAssessmentMethod,
@@ -15,7 +16,11 @@ export class TestIncidentRepository implements IncidentRepository {
   readonly documents = new Map<string, IncidentDocument>();
 
   async listMapIncidents(): Promise<IncidentDocument[]> {
-    return [...this.documents.values()].filter((item) => item.isDemoData === true);
+    return [...this.documents.values()].filter(
+      (item) =>
+        (item.isDemoData === true || item.mapLocationId !== undefined) &&
+        item.verificationStatus !== 'dismissed',
+    );
   }
 
   async ensureIndexes() {}
@@ -97,11 +102,21 @@ export class TestIncidentRepository implements IncidentRepository {
     return [...this.documents.values()]
       .filter(
         (incident) =>
-          incident.extractionStatus === 'completed' && incident.extractedDetails !== null,
+          incident.extractionStatus === 'completed' &&
+          incident.extractedDetails !== null &&
+          incident.verificationStatus !== 'dismissed',
       )
       .map(cloneIncident)
       .sort((a, b) => b.reportedAt.getTime() - a.reportedAt.getTime())
       .slice(0, limit);
+  }
+
+  async setVerificationStatus(reportReference: string, status: VerificationStatus, updatedAt: Date) {
+    const incident = [...this.documents.values()].find((c) => c.reportReference === reportReference);
+    if (!incident) return false;
+    incident.verificationStatus = status;
+    incident.updatedAt = updatedAt;
+    return true;
   }
 
   private findByReference(reportReference: string) {

@@ -20,7 +20,7 @@ export type PublicFeedItem = {
   };
   photoUrl: string | null;
   reportedAt: string;
-  verificationStatus: 'unverified';
+  verificationStatus: 'unverified' | 'verified';
   threatLevel: ThreatLevel;
   isDemoData: boolean;
 };
@@ -40,7 +40,11 @@ const categoryPresentation: Record<
 };
 
 export function toPublicFeedItem(incident: IncidentDocument): PublicFeedItem | null {
-  if (incident.extractionStatus !== 'completed' || !incident.extractedDetails) {
+  if (
+    incident.extractionStatus !== 'completed' ||
+    !incident.extractedDetails ||
+    incident.verificationStatus === 'dismissed'
+  ) {
     return null;
   }
 

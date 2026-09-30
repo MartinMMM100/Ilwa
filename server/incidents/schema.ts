@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { findDemoLocationById } from '../map/demoLocations';
+
 export const incidentRequestSchema = z
   .object({
     description: z
@@ -14,6 +16,10 @@ export const incidentRequestSchema = z
         /^[A-Za-z0-9][A-Za-z0-9._:-]*$/,
         'Submission identifier contains unsupported characters.',
       ),
+    mapLocationId: z
+      .string()
+      .refine((id) => findDemoLocationById(id) !== undefined, 'Unknown map location.')
+      .optional(),
   })
   .strict();
 
