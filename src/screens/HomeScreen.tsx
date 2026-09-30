@@ -1,3 +1,5 @@
+import { SuburbPicker } from '../components/SuburbPicker';
+import { useAreaMap } from '../map/AreaProvider';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -14,6 +16,11 @@ const cityImage = {
 };
 
 export function HomeScreen({ navigate }: HomeScreenProps) {
+  const { area, data, loading, error, refresh } = useAreaMap();
+  const zones = data?.zones ?? [];
+  const reportCount = zones.reduce((sum, zone) => sum + zone.reportCount, 0);
+  const categories = [...new Set(zones.flatMap((zone) => zone.categories))];
+  const latest = zones.map((zone) => zone.lastReportedAt).sort().at(-1);
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -21,7 +28,8 @@ export function HomeScreen({ navigate }: HomeScreenProps) {
         showsVerticalScrollIndicator={false}
         bounces={false}
       >
-        <AppHeader title="SafetyMap" subtitle="Johannesburg · Live Safety View" badge="Live" />
+        <AppHeader title="SafetyMap" subtitle="Johannesburg · Community map pilot" />
+        <SuburbPicker />
 
         <View style={styles.mapWrap}>
           <MapCanvas onSelectArea={() => navigate('area')} />
@@ -29,39 +37,43 @@ export function HomeScreen({ navigate }: HomeScreenProps) {
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="View Braamfontein safety information"
+          accessibilityLabel={`View ${area.name} report information`}
           onPress={() => navigate('area')}
           style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
         >
           <View style={styles.cardHeader}>
             <Image source={cityImage} style={styles.thumb} />
             <View style={styles.cardTitleBlock}>
-              <Text style={styles.areaName}>Braamfontein</Text>
-              <Text style={styles.areaSubtitle}>Current area safety overview</Text>
+              <Text style={styles.areaName}>{area.name}</Text>
+              <Text style={styles.areaSubtitle}>Approximate demo report coverage</Text>
             </View>
             <View style={styles.riskPill}>
-              <Text style={styles.riskText}>HIGH RISK</Text>
+              <Text style={styles.riskText}>DEMO DATA</Text>
             </View>
           </View>
 
           <View style={styles.summaryHeader}>
             <View>
               <Text style={styles.eyebrow}>AREA SUMMARY</Text>
-              <Text style={styles.summaryTitle}>Reported threat</Text>
+              <Text style={styles.summaryTitle}>Reported concerns</Text>
             </View>
             <View style={styles.elevatedPill}>
               <MaterialCommunityIcons name="alert-outline" size={13} color="#855F00" />
-              <Text style={styles.elevatedText}>ELEVATED</Text>
+              <Text style={styles.elevatedText}>UNVERIFIED</Text>
             </View>
           </View>
 
           <View style={styles.metrics}>
-            <Metric label="Common reports" value="Phone snatching, vehicle theft" />
-            <Metric label="Peak hours" value="18:00–22:00" />
-            <Metric label="Reports in period" value="18 community reports" />
-            <Metric label="Last updated" value="Today, 06:42" />
+            <Metric label="Common reports" value={categories.length ? categories.slice(0, 2).map((item) => item.replace(/_/g, ' ')).join(', ') : 'None mapped'} />
+            <Metric label="Report window" value="Last 30 days · submission dates" />
+            <Metric label="Reports in period" value={loading ? 'Loading…' : error ? 'Unavailable' : `${reportCount} demo reports`} />
+            <Metric label="Latest submission" value={latest ? new Date(latest).toLocaleDateString() : 'No recent data'} />
           </View>
 
+          <Text style={styles.notice}>Demo zones show fictional reports, not a prediction of safety. Uncoloured areas have insufficient data.</Text>
+          <Pressable accessibilityRole="button" onPress={(event) => { event.stopPropagation(); refresh(); }} style={styles.refresh}>
+            <Text style={styles.refreshText}>{error ? 'Reports unavailable · Retry' : 'Refresh reports'}</Text>
+          </Pressable>
           <View style={styles.actions}>
             <ActionButton
               icon="radio-tower"
@@ -127,18 +139,21 @@ const styles = StyleSheet.create({
   scrollContent: { paddingBottom: 12 },
   mapWrap: {
     marginHorizontal: 14,
-    marginTop: 20,
+    marginTop: 0,
     borderRadius: 9,
     overflow: 'hidden',
   },
   card: {
     marginHorizontal: 14,
-    marginTop: -39,
+    marginTop: 14,
     borderRadius: 18,
     padding: 14,
     backgroundColor: colors.white,
     ...shadow,
   },
+  notice: { color: colors.muted, fontSize: 11, lineHeight: 16, marginBottom: 8 },
+  refresh: { paddingVertical: 8, marginBottom: 5 },
+  refreshText: { color: colors.green, fontWeight: '700', fontSize: 12 },
   cardPressed: { transform: [{ scale: 0.995 }] },
   cardHeader: { flexDirection: 'row', alignItems: 'center' },
   thumb: { width: 76, height: 55, borderRadius: 12, backgroundColor: '#D9E0E5' },

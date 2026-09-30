@@ -13,6 +13,11 @@ export class DuplicateSubmissionError extends Error {
 export class MongoIncidentRepository implements IncidentRepository {
   constructor(private readonly incidents: Collection<IncidentDocument>) {}
 
+  async listMapIncidents(): Promise<IncidentDocument[]> {
+    return this.incidents.find({ isDemoData: true, extractionStatus: 'completed',
+      reportedAt: { $gte: new Date(Date.now() - 30 * 86_400_000) } }).toArray();
+  }
+
   async ensureIndexes() {
     await Promise.all([
       this.incidents.createIndex({ submissionId: 1 }, { name: 'submission_id_unique', unique: true }),

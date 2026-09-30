@@ -1,3 +1,7 @@
+import { useEffect, useState } from 'react';
+import { SuburbPicker } from '../components/SuburbPicker';
+import { useAreaMap } from '../map/AreaProvider';
+import { concernLabels } from '../../shared/safetyMap';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -9,10 +13,16 @@ import { colors, shadow } from '../theme';
 type AreaScreenProps = { navigate: (route: Route) => void };
 
 export function AreaScreen({ navigate }: AreaScreenProps) {
+  const { area, data, loading, error, refresh } = useAreaMap();
+  const [selectedZoneId, setSelectedZoneId] = useState<string>();
+  useEffect(() => { setSelectedZoneId(undefined); }, [area.id]);
+  const selectedZone = data?.zones.find((zone) => zone.id === selectedZoneId);
+  const zones = selectedZone ? [selectedZone] : data?.zones ?? [];
   return (
     <View style={styles.screen}>
-      <AppHeader title="Braamfontein" showBack centered onBack={() => navigate('home')} />
-      <MapCanvas detailed />
+      <AppHeader title={area.name} showBack centered onBack={() => navigate('home')} />
+      <SuburbPicker />
+      <MapCanvas detailed selectedZoneId={selectedZoneId} onSelectZone={(zone) => setSelectedZoneId(zone?.id)} />
 
       <ScrollView
         style={styles.sheet}
@@ -20,32 +30,29 @@ export function AreaScreen({ navigate }: AreaScreenProps) {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.titleRow}>
-          <Text style={styles.heading}>Area Information</Text>
-          <View style={styles.riskPill}>
-            <Text style={styles.riskText}>HIGH RISK</Text>
+          <Text style={styles.heading}>Reported concerns</Text>
+          <View style={styles.riskPill}><Text style={styles.riskText}>DEMO</Text></View>
+        </View>
+        <Text style={styles.concernDetail}>Fictional records · Approximate landmark centres · Last 30 days by submission date. Zone sizes illustrate report concentration, not the boundary of danger.</Text>
+        {loading && <Text style={styles.concernTitle}>Loading reports…</Text>}
+        {!!error && <Text style={styles.concernTitle}>{error}</Text>}
+        <Pressable accessibilityRole="button" onPress={refresh} style={styles.refresh}>
+          <Text style={styles.refreshText}>{error ? 'Retry loading reports' : 'Refresh reports'}</Text>
+        </Pressable>
+        {selectedZone && <Pressable accessibilityRole="button" onPress={() => setSelectedZoneId(undefined)} style={styles.refresh}>
+          <Text style={styles.refreshText}>Show all zones in {area.name}</Text>
+        </Pressable>}
+        {!loading && !error && !zones.length && <Text style={styles.concernTitle}>No recent mapped reports. This does not establish that the area is safe.</Text>}
+        {zones.map((zone) => <View key={zone.id} style={styles.zoneCard}>
+          <Text style={styles.zoneTitle}>{zone.label}</Text>
+          <Text style={styles.zoneConcern}>{concernLabels[zone.concern]}</Text>
+          <View style={styles.metricGrid}>
+            <Metric label="Demo reports" value={String(zone.reportCount)} />
+            <Metric label="Latest submission" value={new Date(zone.lastReportedAt).toLocaleDateString()} />
+            <Metric label="Reported categories" value={zone.categories.map((category) => category.replace(/_/g, ' ')).join(', ')} />
+            <Metric label="Location accuracy" value="Approximate demo landmark" />
           </View>
-        </View>
-
-        <View style={styles.concernCard}>
-          <MaterialCommunityIcons name="lightbulb-alert-outline" size={27} color={colors.red} />
-          <View style={styles.concernCopy}>
-            <Text style={styles.sectionEyebrow}>REPORTED CONCERN</Text>
-            <Text style={styles.concernTitle}>Broken streetlights near De Korte Street</Text>
-            <Text style={styles.concernDetail}>Recorded separately from reported incidents.</Text>
-          </View>
-        </View>
-
-        <SectionTitle title="Response-time information" />
-        <View style={styles.metricGrid}>
-          <Metric label="Median acknowledgement" value="14 minutes" />
-          <Metric label="Sample size" value="8 accepted reports" />
-          <Metric label="Source" value="Community response log" />
-          <Metric label="Delay reason" value="Unknown" />
-        </View>
-
-        <SectionTitle title="Recent reports" />
-        <ReportRow title="Phone snatching" detail="Juta Street precinct · Today, 06:10" tag="COMMUNITY" />
-        <ReportRow title="Streetlight fault" detail="De Korte Street · Yesterday, 16:25" tag="VERIFIED" verified />
+        </View>)}
 
         <Text style={styles.disclaimer}>
           Community-supplied information can be incomplete. Lower reported threat never guarantees safety.
@@ -115,7 +122,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   sheet: {
     flex: 1,
-    marginTop: -17,
+    marginTop: 0,
     borderTopLeftRadius: 23,
     borderTopRightRadius: 23,
     backgroundColor: colors.white,
@@ -123,7 +130,12 @@ const styles = StyleSheet.create({
   },
   sheetContent: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 22 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  heading: { color: '#080B0D', fontSize: 27, fontWeight: '900' },
+  heading: { color: '#080B0D', fontSize: 23, fontWeight: '900', flex: 1 },
+  zoneCard: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: colors.line },
+  zoneTitle: { fontWeight: '800', fontSize: 17, color: colors.ink },
+  zoneConcern: { marginTop: 3, marginBottom: 12, color: colors.muted },
+  refresh: { paddingVertical: 10 },
+  refreshText: { color: colors.green, fontWeight: '700' },
   riskPill: {
     paddingHorizontal: 10,
     paddingVertical: 7,
