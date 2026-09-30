@@ -17,13 +17,18 @@ config.server.enhanceMiddleware = (metroMiddleware, metroServer) => {
       return enhancedMetroMiddleware(request, response, next);
     }
 
+    const proxyHeaders = { ...request.headers, host: '127.0.0.1:4000' };
+    // The browser sees this as same-origin Metro traffic. Do not forward Metro's
+    // browser Origin to the API and accidentally trigger a cross-origin check.
+    delete proxyHeaders.origin;
+
     const proxyRequest = http.request(
       {
         hostname: '127.0.0.1',
         port: 4000,
         path: request.url,
         method: request.method,
-        headers: { ...request.headers, host: '127.0.0.1:4000' },
+        headers: proxyHeaders,
       },
       (proxyResponse) => {
         response.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.headers);

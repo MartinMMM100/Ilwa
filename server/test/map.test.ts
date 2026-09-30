@@ -9,6 +9,7 @@ function incident(overrides: Partial<IncidentDocument> = {}): IncidentDocument {
     submissionId: 'demo-map-1', reportReference: 'ILWA-DEMO-MAP', reporterId: 'private-id',
     isDemoData: true, originalDescription: 'Private raw narrative', reportedAt: now, updatedAt: now,
     status: 'submitted', verificationStatus: 'unverified', extractionStatus: 'completed',
+    threatLevel: 'high', threatAssessmentMethod: 'rules-v1', threatAssessedAt: now,
     extractionMethod: 'mock-v1', extractionModel: null, extractionFixtureMatched: true,
     extractedDetails: { category: 'robbery', locationText: 'near Park Station', timeText: null,
       itemsTaken: [], offenderCount: null, weaponReported: null, injuriesReported: null, isOngoing: null },

@@ -7,10 +7,11 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import * as ImagePicker from 'expo-image-picker';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Image,
   Linking,
   Pressable,
@@ -23,6 +24,14 @@ import {
 
 import type { Route } from '../../App';
 import {
+  createReportingSessionId,
+  type FallbackContactPreview,
+  linkAssistanceToReport,
+  savePrimaryCallOutcome,
+  startAssistanceRequest,
+  startThirdPartyCall,
+} from '../api/assistance';
+import {
   createSubmissionId,
   type IncidentPhotoAttachment,
   type IncidentSubmissionResult,
@@ -31,12 +40,23 @@ import {
 } from '../api/incidents';
 import { transcribeIncidentAudio } from '../api/transcriptions';
 import { AppHeader } from '../components/AppHeader';
+import { SuburbPicker } from '../components/SuburbPicker';
+import { useAreaMap } from '../map/AreaProvider';
 import { colors } from '../theme';
 
 type ReportScreenProps = { navigate: (route: Route) => void };
 type InputMode = 'text' | 'voice';
+type AssistanceStage =
+  | 'idle'
+  | 'confirm'
+  | 'primary_call'
+  | 'primary_outcome'
+  | 'help_response'
+  | 'fallback_ready'
+  | 'complete';
 
 export function ReportScreen({ navigate }: ReportScreenProps) {
+  const { area } = useAreaMap();
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [description, setDescription] = useState('');
   const [attachment, setAttachment] = useState<IncidentPhotoAttachment | null>(null);
@@ -48,8 +68,34 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
   const [transcriptionFailed, setTranscriptionFailed] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savedReport, setSavedReport] = useState<IncidentSubmissionResult | null>(null);
+  const [reportingSessionId, setReportingSessionId] = useState(createReportingSessionId);
+  const [assistanceRequestId, setAssistanceRequestId] = useState<string | null>(null);
+  const [primaryContactName, setPrimaryContactName] = useState('SAPS');
+  const [primaryContactNumber, setPrimaryContactNumber] = useState<string | null>(null);
+  const [assistanceDemoMode, setAssistanceDemoMode] = useState(false);
+  const [assistanceStage, setAssistanceStage] = useState<AssistanceStage>('idle');
+  const [fallbackContact, setFallbackContact] = useState<FallbackContactPreview | null>(null);
+  const [assistanceMessage, setAssistanceMessage] = useState<string | null>(null);
+  const [assistanceError, setAssistanceError] = useState<string | null>(null);
+  const [assistanceBusy, setAssistanceBusy] = useState(false);
+  const leftForPrimaryCall = useRef(false);
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder, 250);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (assistanceStage !== 'primary_call') return;
+      if (nextState !== 'active') {
+        leftForPrimaryCall.current = true;
+        return;
+      }
+      if (leftForPrimaryCall.current) {
+        leftForPrimaryCall.current = false;
+        setAssistanceStage('primary_outcome');
+      }
+    });
+    return () => subscription.remove();
+  }, [assistanceStage]);
 
   const transcribeVoiceRecording = async (recordingUri: string) => {
     setIsTranscribing(true);
@@ -188,6 +234,15 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
           setErrorMessage(`${detail} The incident report itself was saved successfully.`);
         }
       }
+      if (assistanceRequestId) {
+        try {
+          await linkAssistanceToReport(assistanceRequestId, report.reference);
+        } catch {
+          setAssistanceError(
+            'The report was saved, but its earlier call record could not be linked. The call record remains stored.',
+          );
+        }
+      }
       setSavedReport(report);
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'The report could not be submitted right now.';
@@ -207,19 +262,116 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
     setVoiceUri(null);
     setTranscriptionFailed(false);
     setSubmissionId(createSubmissionId());
+    setReportingSessionId(createReportingSessionId());
     setSavedReport(null);
     setErrorMessage(null);
+    setAssistanceRequestId(null);
+    setPrimaryContactName('SAPS');
+    setPrimaryContactNumber(null);
+    setAssistanceDemoMode(false);
+    setAssistanceStage('idle');
+    setFallbackContact(null);
+    setAssistanceMessage(null);
+    setAssistanceError(null);
+    leftForPrimaryCall.current = false;
   };
 
   const requestAssistance = () => {
-    Alert.alert(
-      'Emergency assistance',
-      'If anyone is in immediate danger, call 112. This opens your phone dialer and does not place the call automatically.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Open dialer', onPress: () => Linking.openURL('tel:112') },
-      ],
-    );
+    setAssistanceError(null);
+    setAssistanceMessage(null);
+    setAssistanceStage('confirm');
+  };
+
+  const openPrimaryCall = async () => {
+    if (assistanceBusy) return;
+    setAssistanceBusy(true);
+    setAssistanceError(null);
+    setAssistanceMessage(null);
+    setFallbackContact(null);
+    try {
+      const result = await startAssistanceRequest(reportingSessionId, area.id);
+      setAssistanceRequestId(result.assistance.requestId);
+      setPrimaryContactName(result.contact.name);
+      setPrimaryContactNumber(result.contact.phoneNumber);
+      setAssistanceDemoMode(result.demoMode);
+      leftForPrimaryCall.current = false;
+      setAssistanceStage('primary_call');
+      if (!result.demoMode) {
+        await Linking.openURL(`tel:${result.contact.phoneNumber}`);
+      }
+    } catch (error) {
+      setAssistanceError(
+        error instanceof Error ? error.message : 'The assistance call could not be opened.',
+      );
+    } finally {
+      setAssistanceBusy(false);
+    }
+  };
+
+  const recordPrimaryOutcome = async (
+    answered: boolean,
+    helpResponse: 'coming' | 'not_coming' | 'unsure',
+  ) => {
+    if (!assistanceRequestId || assistanceBusy) return;
+    setAssistanceBusy(true);
+    setAssistanceError(null);
+    try {
+      const result = await savePrimaryCallOutcome(
+        assistanceRequestId,
+        answered,
+        helpResponse,
+      );
+      if (!result.needsFallback) {
+        setFallbackContact(null);
+        setAssistanceMessage(
+          `${primaryContactName} was recorded as coming to help. The response was saved.`,
+        );
+        setAssistanceStage('complete');
+        return;
+      }
+      if (!result.fallbackContact) {
+        setFallbackContact(null);
+        setAssistanceMessage(
+          'The response was saved, but no active third-party organization is configured for this area.',
+        );
+        setAssistanceStage('complete');
+        return;
+      }
+      setFallbackContact(result.fallbackContact);
+      setAssistanceMessage('The response was saved. A fallback organization is available.');
+      setAssistanceStage('fallback_ready');
+    } catch (error) {
+      setAssistanceError(
+        error instanceof Error ? error.message : 'The call response could not be saved.',
+      );
+    } finally {
+      setAssistanceBusy(false);
+    }
+  };
+
+  const openThirdPartyCall = async () => {
+    if (!assistanceRequestId || assistanceBusy) return;
+    setAssistanceBusy(true);
+    setAssistanceError(null);
+    try {
+      const result = await startThirdPartyCall(assistanceRequestId);
+      const contact = result.contact;
+      setAssistanceMessage(
+        result.demoMode
+          ? `Demo call to ${contact.name} (${contact.phoneNumber}) was saved. No real call was placed.`
+          : `The call to ${contact.name} was saved and opened in your dialer.`,
+      );
+      setAssistanceStage('complete');
+      if (!result.demoMode) {
+        await Linking.openURL(`tel:${contact.phoneNumber}`);
+      }
+    } catch (error) {
+      setAssistanceError(
+        error instanceof Error ? error.message : 'The organization call could not be opened.',
+      );
+    } finally {
+      setAssistanceBusy(false);
+    }
   };
 
   return (
@@ -453,17 +605,171 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
           </Pressable>
         ) : null}
 
+        <View style={styles.assistanceAreaWrap}>
+          <Text style={styles.assistanceAreaLabel}>Assistance area</Text>
+          {assistanceRequestId ? (
+            <Text style={styles.assistanceAreaLocked}>⌖  {area.name} · locked for this call</Text>
+          ) : (
+            <SuburbPicker />
+          )}
+        </View>
+
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{
+            busy: assistanceBusy,
+            disabled: assistanceBusy || assistanceStage !== 'idle',
+          }}
+          disabled={assistanceBusy || assistanceStage !== 'idle'}
           onPress={requestAssistance}
-          style={({ pressed }) => [styles.assistanceButton, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.assistanceButton,
+            (assistanceBusy || assistanceStage !== 'idle') && styles.buttonDisabled,
+            pressed && styles.pressed,
+          ]}
         >
-          <MaterialCommunityIcons name="phone-outline" size={21} color={colors.navy} />
-          <Text style={styles.assistanceText}>Call for assistance</Text>
+          {assistanceBusy && assistanceStage === 'idle' ? (
+            <ActivityIndicator color={colors.navy} />
+          ) : (
+            <MaterialCommunityIcons name="phone-outline" size={21} color={colors.navy} />
+          )}
+          <Text style={styles.assistanceText}>
+            {assistanceRequestId
+              ? 'Assistance call started'
+              : assistanceStage === 'confirm'
+                ? 'Confirm assistance call below'
+                : 'Call for assistance'}
+          </Text>
         </Pressable>
 
+        {assistanceStage !== 'idle' || assistanceError ? (
+          <View style={styles.assistanceCard}>
+            <View style={styles.assistanceTitleRow}>
+              <MaterialCommunityIcons name="phone-check-outline" size={22} color={colors.navy} />
+              <Text style={styles.assistanceCardTitle}>Call follow-up</Text>
+            </View>
+
+            {assistanceStage === 'confirm' ? (
+              <>
+                <Text style={styles.assistancePrompt}>
+                  This will save a call attempt for {area.name} and start the configured assistance flow.
+                </Text>
+                <View style={styles.answerRow}>
+                  <ChoiceButton
+                    label="Cancel"
+                    disabled={assistanceBusy}
+                    onPress={() => setAssistanceStage('idle')}
+                  />
+                  <ChoiceButton
+                    label="Continue"
+                    disabled={assistanceBusy}
+                    onPress={() => void openPrimaryCall()}
+                  />
+                </View>
+              </>
+            ) : null}
+
+            {assistanceStage === 'primary_call' ? (
+              <>
+                <Text style={styles.assistancePrompt}>
+                  {assistanceDemoMode
+                    ? `Demo call to ${primaryContactName}${primaryContactNumber ? ` (${primaryContactNumber})` : ''} was saved. No real call was placed; choose a sample outcome below.`
+                    : `The call attempt was saved. When your call to ${primaryContactName} ends, return here to record what happened.`}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setAssistanceStage('primary_outcome')}
+                  style={({ pressed }) => [styles.outcomeButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.outcomeButtonText}>
+                    {assistanceDemoMode ? 'Choose demo outcome' : 'Record call outcome'}
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
+
+            {assistanceStage === 'primary_outcome' ? (
+              <>
+                <Text style={styles.assistanceQuestion}>Did {primaryContactName} answer?</Text>
+                <View style={styles.answerRow}>
+                  <ChoiceButton
+                    label="No"
+                    disabled={assistanceBusy}
+                    onPress={() => void recordPrimaryOutcome(false, 'not_coming')}
+                  />
+                  <ChoiceButton
+                    label="Yes"
+                    disabled={assistanceBusy}
+                    onPress={() => setAssistanceStage('help_response')}
+                  />
+                </View>
+              </>
+            ) : null}
+
+            {assistanceStage === 'help_response' ? (
+              <>
+                <Text style={styles.assistanceQuestion}>Are they coming to help?</Text>
+                <View style={styles.answerRow}>
+                  <ChoiceButton
+                    label="Yes"
+                    disabled={assistanceBusy}
+                    onPress={() => void recordPrimaryOutcome(true, 'coming')}
+                  />
+                  <ChoiceButton
+                    label="No"
+                    disabled={assistanceBusy}
+                    onPress={() => void recordPrimaryOutcome(true, 'not_coming')}
+                  />
+                  <ChoiceButton
+                    label="Unsure"
+                    disabled={assistanceBusy}
+                    onPress={() => void recordPrimaryOutcome(true, 'unsure')}
+                  />
+                </View>
+              </>
+            ) : null}
+
+            {assistanceStage === 'fallback_ready' && fallbackContact ? (
+              <>
+                <Text style={styles.assistanceQuestion}>Closest configured organization</Text>
+                <Text style={styles.fallbackName}>{fallbackContact.name}</Text>
+                <Text style={styles.fallbackDistance}>
+                  Approximately {formatDistance(fallbackContact.distanceMeters)} from {area.name}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={assistanceBusy}
+                  onPress={() => void openThirdPartyCall()}
+                  style={({ pressed }) => [
+                    styles.outcomeButton,
+                    assistanceBusy && styles.buttonDisabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  {assistanceBusy ? <ActivityIndicator color={colors.white} /> : null}
+                  <Text style={styles.outcomeButtonText}>Call {fallbackContact.name}</Text>
+                </Pressable>
+              </>
+            ) : null}
+
+            {assistanceStage === 'complete' && assistanceMessage ? (
+              <View accessibilityLiveRegion="polite" style={styles.assistanceSavedRow}>
+                <MaterialCommunityIcons name="database-check-outline" size={20} color={colors.green} />
+                <Text style={styles.assistanceSavedText}>{assistanceMessage}</Text>
+              </View>
+            ) : null}
+
+            {assistanceError ? (
+              <View accessibilityLiveRegion="polite" style={styles.assistanceErrorRow}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={19} color="#A51E2C" />
+                <Text style={styles.assistanceErrorText}>{assistanceError}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
         <Text style={styles.footerNote}>
-          Reports are stored as unverified community submissions. Submitting does not contact emergency responders.
+          Reports are stored as unverified community submissions. Demo calls save sample data without contacting a real number.
         </Text>
       </ScrollView>
     </View>
@@ -524,6 +830,31 @@ function ModeButton({
   );
 }
 
+function ChoiceButton({
+  label,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.choiceButton,
+        disabled && styles.buttonDisabled,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Text style={styles.choiceButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function Field({
   label,
   helper,
@@ -548,6 +879,11 @@ function formatDuration(durationMillis: number) {
   const seconds = Math.max(0, Math.floor(durationMillis / 1_000));
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function formatDistance(distanceMeters: number) {
+  if (distanceMeters < 1_000) return `${distanceMeters} m`;
+  return `${(distanceMeters / 1_000).toFixed(1)} km`;
 }
 
 function getSuccessDetail(
@@ -738,7 +1074,68 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: colors.white,
   },
+  assistanceAreaWrap: { marginTop: 15 },
+  assistanceAreaLabel: { color: colors.ink, fontSize: 12, fontWeight: '900' },
+  assistanceAreaLocked: {
+    marginTop: 7,
+    padding: 12,
+    borderRadius: 9,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: '800',
+    backgroundColor: colors.white,
+  },
   assistanceText: { color: colors.navy, fontSize: 14, fontWeight: '900' },
+  assistanceCard: {
+    marginTop: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#BFCED8',
+    borderRadius: 10,
+    backgroundColor: colors.white,
+  },
+  assistanceTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  assistanceCardTitle: { color: colors.navy, fontSize: 14, fontWeight: '900' },
+  assistancePrompt: { marginTop: 9, color: colors.muted, fontSize: 11, lineHeight: 16 },
+  assistanceQuestion: { marginTop: 10, color: colors.ink, fontSize: 13, fontWeight: '900' },
+  answerRow: { marginTop: 10, flexDirection: 'row', gap: 8 },
+  choiceButton: {
+    flex: 1,
+    minHeight: 42,
+    borderWidth: 1.5,
+    borderColor: colors.navy,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.white,
+  },
+  choiceButtonText: { color: colors.navy, fontSize: 12, fontWeight: '900' },
+  outcomeButton: {
+    minHeight: 44,
+    marginTop: 11,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    backgroundColor: colors.navy,
+  },
+  outcomeButtonText: { color: colors.white, fontSize: 12, fontWeight: '900' },
+  fallbackName: { marginTop: 7, color: colors.navy, fontSize: 15, fontWeight: '900' },
+  fallbackDistance: { marginTop: 3, color: colors.muted, fontSize: 10 },
+  assistanceSavedRow: { marginTop: 9, flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
+  assistanceSavedText: { flex: 1, color: '#26583A', fontSize: 11, lineHeight: 16, fontWeight: '700' },
+  assistanceErrorRow: {
+    marginTop: 10,
+    padding: 9,
+    borderRadius: 7,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    backgroundColor: colors.redSoft,
+  },
+  assistanceErrorText: { flex: 1, color: '#7C1B25', fontSize: 10, lineHeight: 15, fontWeight: '700' },
   buttonDisabled: { opacity: 0.55 },
   footerNote: { marginTop: 12, color: colors.muted, fontSize: 9, lineHeight: 13, textAlign: 'center' },
   pressed: { opacity: 0.65 },

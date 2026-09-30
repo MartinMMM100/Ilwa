@@ -42,12 +42,24 @@ Copy `.env.example` to `.env` and replace the MongoDB placeholders. Existing `.e
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DB=ilwa
 DEV_REPORTER_ID=development-only-resident
+ASSISTANCE_DEMO_MODE=true
+SAPS_CALL_LABEL=Demo SAPS Dispatch
+SAPS_CALL_NUMBER=+27000000001
+THIRD_PARTY_ORGANIZATIONS_JSON=[{"id":"ubuntu-shield-demo","name":"Ubuntu Shield Response (Demo)","phoneNumber":"+27000000011","latitude":-26.184,"longitude":28.039,"active":true,"areaIds":["braamfontein","parktown","hillbrow"]}]
 PORT=4000
 CLIENT_ORIGIN=http://localhost:8081
 EXPO_PUBLIC_API_URL=http://localhost:4000
 ```
 
 `MONGODB_URI` and `MONGODB_DB` are read only by the server. Never prefix MongoDB credentials with `EXPO_PUBLIC_`. When using Expo Go on a physical device, set `EXPO_PUBLIC_API_URL` to the computer's LAN address, for example `http://192.168.1.10:4000`.
+
+Set `ASSISTANCE_DEMO_MODE=true` while using fictional contacts. Demo mode saves the call workflow without opening a dialer or contacting anyone. `THIRD_PARTY_ORGANIZATIONS_JSON` is a server-only JSON array. Each item requires `id`, `name`, `phoneNumber`, `latitude`, and `longitude`; it may also include `active` and an `areaIds` list. For example, the shape is:
+
+```json
+[{"id":"partner-id","name":"Partner name","phoneNumber":"+27...","latitude":-26.19,"longitude":28.03,"active":true,"areaIds":["braamfontein"]}]
+```
+
+The report screen saves a call attempt to the `assistanceRequests` MongoDB collection. In demo mode, the user selects a simulated outcome without a real call. A fallback is offered only when help is not confirmed, and the server chooses the nearest active organization configured for the selected suburb. Run `npm run seed:demo` to add the demo incident reports and six linked sample call records. When demo mode is disabled, the phone still requires the user to place every real call from the system dialer.
 
 The app has no authentication provider yet. Outside production, the API assigns the explicitly development-only `DEV_REPORTER_ID`. The API refuses to start in `NODE_ENV=production` until real authentication middleware is supplied.
 

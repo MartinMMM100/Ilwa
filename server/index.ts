@@ -3,6 +3,9 @@ import 'dotenv/config';
 import { createServer } from 'node:http';
 
 import { createApp } from './app';
+import { resolveAssistanceContacts } from './assistance/contacts';
+import type { AssistanceRequestDocument } from './assistance/model';
+import { MongoAssistanceRequestRepository } from './assistance/mongoRepository';
 import { closeMongoClient, getMongoClient } from './db';
 import { resolveIncidentExtractor } from './incidents/extractorConfig';
 import { MongoIncidentRepository } from './incidents/mongoRepository';
@@ -21,8 +24,11 @@ async function start() {
   const database = mongoClient.db(databaseName);
   const incidents = database.collection<IncidentDocument>('incidents');
   const incidentPhotos = database.collection<IncidentPhotoDocument>('incidentPhotos');
+  const assistanceRequests = database.collection<AssistanceRequestDocument>('assistanceRequests');
   const repository = new MongoIncidentRepository(incidents);
   const photoStore = new MongoIncidentPhotoStore(incidentPhotos);
+  const assistanceRepository = new MongoAssistanceRequestRepository(assistanceRequests);
+  const assistanceContacts = resolveAssistanceContacts(process.env);
   const extraction = resolveIncidentExtractor(process.env);
   const transcriptionModel = process.env.OPENAI_TRANSCRIPTION_MODEL?.trim() || 'gpt-transcribe';
   const transcriber = process.env.OPENAI_API_KEY?.trim()
@@ -32,9 +38,22 @@ async function start() {
       })
     : undefined;
 
-  await Promise.all([repository.ensureIndexes(), photoStore.ensureIndexes()]);
+  await Promise.all([
+    repository.ensureIndexes(),
+    photoStore.ensureIndexes(),
+    assistanceRepository.ensureIndexes(),
+  ]);
 
-  const server = createServer(createApp({ repository, photoStore, transcriber, ...extraction }));
+  const server = createServer(
+    createApp({
+      repository,
+      assistanceRepository,
+      assistanceContacts,
+      photoStore,
+      transcriber,
+      ...extraction,
+    }),
+  );
   server.listen(port, () => {
     const extractorLabel = extraction.extractionModel
       ? `${extraction.extractionMethod} (${extraction.extractionModel})`

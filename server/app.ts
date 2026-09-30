@@ -3,8 +3,19 @@ import { aggregateDemoMap } from './map/aggregate';
 import cors from 'cors';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import multer, { MulterError } from 'multer';
+import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 
+import {
+  findNearestThirdParty,
+  type AssistanceContacts,
+} from './assistance/contacts';
+import type { AssistanceRequestRepository } from './assistance/model';
+import {
+  linkAssistanceReportSchema,
+  primaryOutcomeSchema,
+  startAssistanceRequestSchema,
+} from './assistance/schema';
 import type { ExtractionMethod, IncidentRepository } from './incidents/model';
 import type { IncidentPhotoStore } from './incidents/photoStore';
 import { toPublicFeedItem } from './incidents/publicFeed';
@@ -53,6 +64,8 @@ class UnsupportedPhotoTypeError extends Error {
 
 type AppOptions = {
   repository: IncidentRepository;
+  assistanceRepository?: AssistanceRequestRepository;
+  assistanceContacts?: AssistanceContacts;
   photoStore?: IncidentPhotoStore;
   environment?: NodeJS.ProcessEnv;
   reporterMiddleware?: RequestHandler;
@@ -117,6 +130,322 @@ export function createApp(options: AppOptions) {
       response.status(503).json({ error: { code: 'MAP_UNAVAILABLE', message: 'Could not load area reports. Try again.' } });
     }
   });
+
+  app.post(
+    '/api/assistance-requests',
+    reporterMiddleware,
+    requireReporter,
+    async (request, response) => {
+      const parsedRequest = startAssistanceRequestSchema.safeParse(request.body);
+      if (!parsedRequest.success) {
+        response.status(400).json({
+          error: {
+            code: 'INVALID_ASSISTANCE_REQUEST',
+            message: 'Provide a valid reporting session and pilot area.',
+            fields: parsedRequest.error.flatten().fieldErrors,
+          },
+        });
+        return;
+      }
+
+      const assistanceRepository = options.assistanceRepository;
+      const primaryContact = options.assistanceContacts?.primary;
+      if (!assistanceRepository || !primaryContact) {
+        response.status(503).json({
+          error: {
+            code: 'ASSISTANCE_NOT_CONFIGURED',
+            message: 'The assistance test number has not been configured yet.',
+          },
+        });
+        return;
+      }
+
+      const now = new Date();
+      try {
+        const assistance = await assistanceRepository.startPrimaryCall({
+          requestId: randomUUID(),
+          reportingSessionId: parsedRequest.data.reportingSessionId,
+          reportReference: null,
+          reporterId: request.reporterId!,
+          isDemoData: options.assistanceContacts?.demoMode ?? false,
+          areaId: parsedRequest.data.areaId,
+          status: 'primary_call_started',
+          primaryCall: {
+            contactId: primaryContact.id,
+            name: primaryContact.name,
+            phoneNumber: primaryContact.phoneNumber,
+            initiatedAt: now,
+            answered: null,
+            helpResponse: null,
+            confirmedAt: null,
+          },
+          thirdPartyCall: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        response.status(201).json({
+          assistance: {
+            requestId: assistance.requestId,
+            reportingSessionId: assistance.reportingSessionId,
+            status: assistance.status,
+          },
+          contact: {
+            id: assistance.primaryCall.contactId,
+            name: assistance.primaryCall.name,
+            phoneNumber: assistance.primaryCall.phoneNumber,
+          },
+          demoMode: options.assistanceContacts?.demoMode ?? false,
+        });
+      } catch {
+        response.status(503).json({
+          error: {
+            code: 'ASSISTANCE_STORAGE_UNAVAILABLE',
+            message: 'The call attempt could not be saved. No call was opened.',
+          },
+        });
+      }
+    },
+  );
+
+  app.patch(
+    '/api/assistance-requests/:requestId/primary-outcome',
+    reporterMiddleware,
+    requireReporter,
+    async (request, response) => {
+      const parsedRequest = primaryOutcomeSchema.safeParse(request.body);
+      if (!parsedRequest.success) {
+        response.status(400).json({
+          error: {
+            code: 'INVALID_CALL_OUTCOME',
+            message: 'Provide whether the call was answered and whether help is coming.',
+            fields: parsedRequest.error.flatten().fieldErrors,
+          },
+        });
+        return;
+      }
+
+      const assistanceRepository = options.assistanceRepository;
+      if (!assistanceRepository) {
+        response.status(503).json({
+          error: { code: 'ASSISTANCE_NOT_CONFIGURED', message: 'Assistance storage is unavailable.' },
+        });
+        return;
+      }
+      const requestId = readPathParameter(request.params.requestId);
+      if (!requestId) {
+        response.status(400).json({
+          error: { code: 'INVALID_ASSISTANCE_ID', message: 'The assistance request id is invalid.' },
+        });
+        return;
+      }
+
+      const now = new Date();
+      try {
+        const assistance = await assistanceRepository.recordPrimaryOutcome(
+          requestId,
+          request.reporterId!,
+          { ...parsedRequest.data, confirmedAt: now, updatedAt: now },
+        );
+        if (!assistance) {
+          response.status(404).json({
+            error: { code: 'ASSISTANCE_NOT_FOUND', message: 'The assistance request was not found.' },
+          });
+          return;
+        }
+
+        const needsFallback = assistance.primaryCall.helpResponse !== 'coming';
+        const area = suburbs.find((candidate) => candidate.id === assistance.areaId);
+        const fallback =
+          needsFallback && area
+            ? findNearestThirdParty(options.assistanceContacts?.thirdParties ?? [], area)
+            : null;
+        response.status(200).json({
+          assistance: { requestId: assistance.requestId, status: assistance.status },
+          needsFallback,
+          fallbackContact: fallback
+            ? {
+                id: fallback.contact.id,
+                name: fallback.contact.name,
+                distanceMeters: fallback.distanceMeters,
+              }
+            : null,
+        });
+      } catch {
+        response.status(503).json({
+          error: {
+            code: 'ASSISTANCE_STORAGE_UNAVAILABLE',
+            message: 'The call outcome could not be saved. Please retry.',
+          },
+        });
+      }
+    },
+  );
+
+  app.post(
+    '/api/assistance-requests/:requestId/third-party-call',
+    reporterMiddleware,
+    requireReporter,
+    async (request, response) => {
+      const assistanceRepository = options.assistanceRepository;
+      if (!assistanceRepository) {
+        response.status(503).json({
+          error: { code: 'ASSISTANCE_NOT_CONFIGURED', message: 'Assistance storage is unavailable.' },
+        });
+        return;
+      }
+      const requestId = readPathParameter(request.params.requestId);
+      if (!requestId) {
+        response.status(400).json({
+          error: { code: 'INVALID_ASSISTANCE_ID', message: 'The assistance request id is invalid.' },
+        });
+        return;
+      }
+
+      try {
+        const assistance = await assistanceRepository.findByRequestId(
+          requestId,
+          request.reporterId!,
+        );
+        if (!assistance) {
+          response.status(404).json({
+            error: { code: 'ASSISTANCE_NOT_FOUND', message: 'The assistance request was not found.' },
+          });
+          return;
+        }
+        if (!assistance.primaryCall.confirmedAt) {
+          response.status(409).json({
+            error: {
+              code: 'PRIMARY_OUTCOME_REQUIRED',
+              message: 'Record the first call outcome before calling another organization.',
+            },
+          });
+          return;
+        }
+        if (assistance.primaryCall.helpResponse === 'coming') {
+          response.status(409).json({
+            error: {
+              code: 'FALLBACK_NOT_REQUIRED',
+              message: 'The first responder was recorded as coming to help.',
+            },
+          });
+          return;
+        }
+
+        const area = suburbs.find((candidate) => candidate.id === assistance.areaId);
+        const fallback = area
+          ? findNearestThirdParty(options.assistanceContacts?.thirdParties ?? [], area)
+          : null;
+        if (!fallback) {
+          response.status(404).json({
+            error: {
+              code: 'NO_FALLBACK_CONTACT',
+              message: 'No active third-party organization is configured for this area.',
+            },
+          });
+          return;
+        }
+
+        const now = new Date();
+        const updated = await assistanceRepository.recordThirdPartyCall(
+          assistance.requestId,
+          request.reporterId!,
+          {
+            contactId: fallback.contact.id,
+            name: fallback.contact.name,
+            phoneNumber: fallback.contact.phoneNumber,
+            distanceMeters: fallback.distanceMeters,
+            initiatedAt: now,
+          },
+          now,
+        );
+        if (!updated) {
+          response.status(404).json({
+            error: { code: 'ASSISTANCE_NOT_FOUND', message: 'The assistance request was not found.' },
+          });
+          return;
+        }
+
+        response.status(200).json({
+          assistance: { requestId: updated.requestId, status: updated.status },
+          contact: {
+            id: fallback.contact.id,
+            name: fallback.contact.name,
+            phoneNumber: fallback.contact.phoneNumber,
+            distanceMeters: fallback.distanceMeters,
+          },
+          demoMode: options.assistanceContacts?.demoMode ?? false,
+        });
+      } catch {
+        response.status(503).json({
+          error: {
+            code: 'ASSISTANCE_STORAGE_UNAVAILABLE',
+            message: 'The third-party call could not be saved. No call was opened.',
+          },
+        });
+      }
+    },
+  );
+
+  app.patch(
+    '/api/assistance-requests/:requestId/report',
+    reporterMiddleware,
+    requireReporter,
+    async (request, response) => {
+      const parsedRequest = linkAssistanceReportSchema.safeParse(request.body);
+      if (!parsedRequest.success) {
+        response.status(400).json({
+          error: { code: 'INVALID_REPORT_REFERENCE', message: 'Provide a valid report reference.' },
+        });
+        return;
+      }
+      if (!options.assistanceRepository) {
+        response.status(503).json({
+          error: { code: 'ASSISTANCE_NOT_CONFIGURED', message: 'Assistance storage is unavailable.' },
+        });
+        return;
+      }
+      const requestId = readPathParameter(request.params.requestId);
+      if (!requestId) {
+        response.status(400).json({
+          error: { code: 'INVALID_ASSISTANCE_ID', message: 'The assistance request id is invalid.' },
+        });
+        return;
+      }
+
+      try {
+        const incident = await options.repository.findByReportReference(
+          parsedRequest.data.reportReference,
+        );
+        if (!incident || incident.reporterId !== request.reporterId) {
+          response.status(404).json({
+            error: { code: 'REPORT_NOT_FOUND', message: 'The report was not found.' },
+          });
+          return;
+        }
+        const linked = await options.assistanceRepository.linkReport(
+          requestId,
+          request.reporterId!,
+          incident.reportReference,
+          new Date(),
+        );
+        if (!linked) {
+          response.status(404).json({
+            error: { code: 'ASSISTANCE_NOT_FOUND', message: 'The assistance request was not found.' },
+          });
+          return;
+        }
+        response.status(204).end();
+      } catch {
+        response.status(503).json({
+          error: {
+            code: 'ASSISTANCE_STORAGE_UNAVAILABLE',
+            message: 'The assistance request could not be linked to the report.',
+          },
+        });
+      }
+    },
+  );
 
   app.post('/api/incidents', reporterMiddleware, requireReporter, async (request, response) => {
     const parsedRequest = incidentRequestSchema.safeParse(request.body);
@@ -459,6 +788,10 @@ function parseFeedLimit(value: unknown) {
   }
   const limit = Number(value);
   return Number.isInteger(limit) && limit >= 1 && limit <= 50 ? limit : null;
+}
+
+function readPathParameter(value: string | string[] | undefined) {
+  return typeof value === 'string' && value.length >= 8 && value.length <= 100 ? value : null;
 }
 
 function createCorsMiddleware(environment: NodeJS.ProcessEnv) {
