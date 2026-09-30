@@ -9,6 +9,7 @@ import type {
   IncidentRepository,
 } from './model';
 import { incidentDetailsSchema } from './schema';
+import { assessIncidentThreat } from './threatAssessment';
 
 export class SubmissionConflictError extends Error {
   constructor() {
@@ -73,6 +74,9 @@ export async function submitIncident(
     updatedAt: reportedAt,
     status: 'submitted',
     verificationStatus: 'unverified',
+    threatLevel: 'unknown',
+    threatAssessmentMethod: null,
+    threatAssessedAt: null,
     extractionStatus: 'pending',
     extractionMethod,
     extractionModel,
@@ -111,10 +115,13 @@ export async function submitIncident(
   }
 
   try {
+    const assessment = assessIncidentThreat(details);
     await dependencies.repository.completeExtraction(
       reportReference,
       details,
       fixtureMatcher?.(input.description) ?? null,
+      assessment.level,
+      assessment.method,
       clock(),
     );
     return { reportReference, extractionStatus: 'completed', duplicate: false };

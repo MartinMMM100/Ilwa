@@ -39,6 +39,9 @@ test('extraction failure preserves the original report and marks extraction fail
   assert.equal(stored.verificationStatus, 'unverified');
   assert.equal(stored.extractionStatus, 'failed');
   assert.equal(stored.extractedDetails, null);
+  assert.equal(stored.threatLevel, 'unknown');
+  assert.equal(stored.threatAssessmentMethod, null);
+  assert.equal(stored.threatAssessedAt, null);
 });
 
 test('retrying the same submission returns one saved report and runs extraction once', async () => {
@@ -81,6 +84,11 @@ test('retrying the same submission returns one saved report and runs extraction 
     repository.documents.get('submission-duplicate-1')?.extractionFixtureMatched,
     false,
   );
+  assert.equal(repository.documents.get('submission-duplicate-1')?.threatLevel, 'unknown');
+  assert.equal(
+    repository.documents.get('submission-duplicate-1')?.threatAssessmentMethod,
+    'rules-v1',
+  );
   assert.deepEqual(retry, {
     reportReference: 'ILWA-DUPLICATE01',
     extractionStatus: 'completed',
@@ -121,5 +129,8 @@ test('real AI extraction metadata is stored without claiming a mock fixture matc
   assert.equal(stored.extractionMethod, 'openai-responses-v1');
   assert.equal(stored.extractionModel, 'test-incident-model');
   assert.equal(stored.extractionFixtureMatched, null);
+  assert.equal(stored.threatLevel, 'high');
+  assert.equal(stored.threatAssessmentMethod, 'rules-v1');
+  assert.ok(stored.threatAssessedAt instanceof Date);
   assert.deepEqual(stored.extractedDetails, extractedDetails);
 });

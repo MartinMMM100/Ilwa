@@ -31,6 +31,9 @@ One document represents one submitted incident. The original paragraph and repor
 
   status: "submitted",
   verificationStatus: "unverified",
+  threatLevel: "high",
+  threatAssessmentMethod: "rules-v1",
+  threatAssessedAt: ISODate("2026-09-29T18:25:02.000Z"),
   extractionStatus: "completed",
   extractionMethod: "openai-responses-v1",
   extractionModel: "gpt-6-luna",
@@ -65,6 +68,9 @@ The example values are fictional. `locationText` and `timeText` are extracted ph
 | `updatedAt` | Date | Server | Time of the latest extraction-workflow update. |
 | `status` | `submitted` | Server | Submission lifecycle state. |
 | `verificationStatus` | `unverified` | Server | Extraction never changes verification. |
+| `threatLevel` | `unknown`, `low`, `medium`, `high`, or `critical` | Threat assessor | Map-friendly reported threat indicator. It is not verification or a dispatch priority. |
+| `threatAssessmentMethod` | `rules-v1` or null | Threat assessor | Versioned method that produced the level; null until assessment is possible. |
+| `threatAssessedAt` | Date or null | Server | Time the threat level was assessed; null before an assessment is possible. |
 | `extractionStatus` | `pending`, `completed`, or `failed` | Server | Structured-extraction workflow state. |
 | `extractionMethod` | `mock-v1` or `openai-responses-v1` | Server | Extraction provider and workflow version. |
 | `extractionModel` | string or null | Server | OpenAI model used, or null for the mock extractor. |
@@ -104,11 +110,13 @@ POST /api/incidents
   → insert original document with extractionStatus: pending
   → call the configured extractIncident(description) implementation
   → validate the returned structure
-  → update extractionStatus to completed and store extractedDetails
+  → assess a provisional threat level from the validated details
+  → update extractionStatus to completed and store extractedDetails and threat fields
 
 If extraction fails:
   → retain originalDescription
   → set extractionStatus to failed
+  → leave threatLevel as unknown
   → keep verificationStatus as unverified
   → return the saved reportReference
 ```
@@ -117,6 +125,23 @@ Set `INCIDENT_EXTRACTOR=mock` for deterministic fixture extraction or
 `INCIDENT_EXTRACTOR=openai` for the server-side OpenAI implementation. OpenAI mode also uses
 `OPENAI_API_KEY` and `OPENAI_INCIDENT_MODEL`. It does not fall back to mock extraction when an
 API call fails.
+
+## Threat-level rules
+
+`rules-v1` is a temporary deterministic assessor. It provides a stable map tag without making a
+second paid AI call:
+
+| Level | Current rule |
+| --- | --- |
+| `critical` | The report says the incident is ongoing and also describes robbery, assault, a weapon, or injuries. |
+| `high` | Robbery, assault, a reported weapon, or reported injuries when the event is not explicitly ongoing. |
+| `medium` | Other ongoing incidents, theft, vehicle theft, vandalism, or suspicious activity. |
+| `low` | Infrastructure faults without reported immediate harm. |
+| `unknown` | Unclear details, pending extraction, failed extraction, or invalid legacy details. |
+
+The replaceable boundary is `assessIncidentThreat(details)` in
+`server/incidents/threatAssessment.ts`. A future AI assessor can replace that implementation
+without changing the report screen, incident storage workflow, or map queries.
 
 ## Voice transcription boundary
 
@@ -131,6 +156,7 @@ incident form before `originalDescription` is saved.
 | --- | --- | --- |
 | `{ submissionId: 1 }` | Yes | Prevent duplicate records on retries. |
 | `{ reportReference: 1 }` | Yes | Ensure every user-facing reference is unique. |
+| `{ isDemoData: 1, threatLevel: 1, reportedAt: -1 }` | No | Support map filtering by threat level and recency while excluding demo data. |
 
 ## Safe internal query examples
 
@@ -160,6 +186,16 @@ db.incidents.aggregate([
 ])
 ```
 
+Count real reports by threat level for a map legend or area summary:
+
+```javascript
+db.incidents.aggregate([
+  { $match: { isDemoData: { $ne: true } } },
+  { $group: { _id: "$threatLevel", count: { $sum: 1 } } },
+  { $sort: { count: -1 } }
+])
+```
+
 Inspect demo-data distribution:
 
 ```javascript
@@ -181,9 +217,13 @@ db.incidents.aggregate([
 - Never publish exact future GPS coordinates in the live feed or map.
 - Do not treat `locationText` as a verified location.
 - Do not treat extraction as verification.
+- Do not treat `threatLevel` as proof, responder dispatch priority, or a current-safety guarantee.
 - Exclude `isDemoData: true` from real risk calculations, statistics, and alerts.
 - Build live-feed and map responses from sanitized projections or aggregated area records.
 
 ## Planned location extension
 
-The current schema does not yet store device location, normalized incident time, area identifiers, or risk scores. Those should be added as versioned fields after the location-confirmation and area-aggregation workflows are implemented. Until then, consumers must not infer coordinates from `locationText`.
+The current schema does not yet store device location, normalized incident time, area identifiers,
+or aggregated area risk scores. Those should be added as versioned fields after the
+location-confirmation and area-aggregation workflows are implemented. Until then, consumers must
+not infer coordinates from `locationText` or treat one report's `threatLevel` as an area score.

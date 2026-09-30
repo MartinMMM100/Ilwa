@@ -1,6 +1,10 @@
 import { DuplicateSubmissionError } from '../incidents/mongoRepository';
 import type { IncidentDetails } from '../incidents/schema';
 import type { IncidentDocument, IncidentRepository, StoredIncident } from '../incidents/model';
+import type {
+  ThreatAssessmentMethod,
+  ThreatLevel,
+} from '../incidents/threatAssessment';
 
 export class TestIncidentRepository implements IncidentRepository {
   readonly documents = new Map<string, IncidentDocument>();
@@ -24,12 +28,17 @@ export class TestIncidentRepository implements IncidentRepository {
     reportReference: string,
     details: IncidentDetails,
     fixtureMatched: boolean | null,
+    threatLevel: ThreatLevel,
+    threatAssessmentMethod: ThreatAssessmentMethod,
     updatedAt: Date,
   ) {
     const incident = this.findByReference(reportReference);
     incident.extractedDetails = { ...details, itemsTaken: [...details.itemsTaken] };
     incident.extractionStatus = 'completed';
     incident.extractionFixtureMatched = fixtureMatched;
+    incident.threatLevel = threatLevel;
+    incident.threatAssessmentMethod = threatAssessmentMethod;
+    incident.threatAssessedAt = updatedAt;
     incident.updatedAt = updatedAt;
   }
 
@@ -38,6 +47,9 @@ export class TestIncidentRepository implements IncidentRepository {
     incident.extractedDetails = null;
     incident.extractionStatus = 'failed';
     incident.extractionFixtureMatched = null;
+    incident.threatLevel = 'unknown';
+    incident.threatAssessmentMethod = null;
+    incident.threatAssessedAt = null;
     incident.updatedAt = updatedAt;
   }
 
@@ -57,6 +69,9 @@ function cloneIncident(incident: IncidentDocument): IncidentDocument {
     ...incident,
     reportedAt: new Date(incident.reportedAt),
     updatedAt: new Date(incident.updatedAt),
+    threatAssessedAt: incident.threatAssessedAt
+      ? new Date(incident.threatAssessedAt)
+      : null,
     extractedDetails: incident.extractedDetails
       ? { ...incident.extractedDetails, itemsTaken: [...incident.extractedDetails.itemsTaken] }
       : null,

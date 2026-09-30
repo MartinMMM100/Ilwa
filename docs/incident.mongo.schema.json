@@ -11,6 +11,9 @@
       "updatedAt",
       "status",
       "verificationStatus",
+      "threatLevel",
+      "threatAssessmentMethod",
+      "threatAssessedAt",
       "extractionStatus",
       "extractionMethod",
       "extractionModel",
@@ -61,6 +64,20 @@
       "verificationStatus": {
         "bsonType": "string",
         "enum": ["unverified"]
+      },
+      "threatLevel": {
+        "bsonType": "string",
+        "enum": ["unknown", "low", "medium", "high", "critical"],
+        "description": "Provisional map-friendly threat indicator; not verification or dispatch priority."
+      },
+      "threatAssessmentMethod": {
+        "bsonType": ["string", "null"],
+        "enum": ["rules-v1", null],
+        "description": "Versioned method that assigned the threat level, or null before assessment."
+      },
+      "threatAssessedAt": {
+        "bsonType": ["date", "null"],
+        "description": "Server time of the threat assessment, or null before assessment."
       },
       "extractionStatus": {
         "bsonType": "string",

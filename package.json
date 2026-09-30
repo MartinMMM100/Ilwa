@@ -8,6 +8,7 @@
     "server": "tsx server/index.ts",
     "server:dev": "tsx watch server/index.ts",
     "seed:incidents": "tsx server/seed/incidents.ts",
+    "backfill:threat-levels": "tsx server/migrations/backfillThreatLevels.ts",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",

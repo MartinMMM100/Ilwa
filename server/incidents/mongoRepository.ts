@@ -2,6 +2,7 @@ import { type Collection, MongoServerError } from 'mongodb';
 
 import type { IncidentDetails } from './schema';
 import type { IncidentDocument, IncidentRepository, StoredIncident } from './model';
+import type { ThreatAssessmentMethod, ThreatLevel } from './threatAssessment';
 
 export class DuplicateSubmissionError extends Error {
   constructor() {
@@ -17,6 +18,10 @@ export class MongoIncidentRepository implements IncidentRepository {
     await Promise.all([
       this.incidents.createIndex({ submissionId: 1 }, { name: 'submission_id_unique', unique: true }),
       this.incidents.createIndex({ reportReference: 1 }, { name: 'report_reference_unique', unique: true }),
+      this.incidents.createIndex(
+        { isDemoData: 1, threatLevel: 1, reportedAt: -1 },
+        { name: 'map_threat_recency' },
+      ),
     ]);
   }
 
@@ -41,6 +46,8 @@ export class MongoIncidentRepository implements IncidentRepository {
     reportReference: string,
     details: IncidentDetails,
     fixtureMatched: boolean | null,
+    threatLevel: ThreatLevel,
+    threatAssessmentMethod: ThreatAssessmentMethod,
     updatedAt: Date,
   ) {
     const result = await this.incidents.updateOne(
@@ -50,6 +57,9 @@ export class MongoIncidentRepository implements IncidentRepository {
           extractedDetails: details,
           extractionStatus: 'completed',
           extractionFixtureMatched: fixtureMatched,
+          threatLevel,
+          threatAssessmentMethod,
+          threatAssessedAt: updatedAt,
           updatedAt,
         },
       },
@@ -68,6 +78,9 @@ export class MongoIncidentRepository implements IncidentRepository {
           extractionStatus: 'failed',
           extractionFixtureMatched: null,
           extractedDetails: null,
+          threatLevel: 'unknown',
+          threatAssessmentMethod: null,
+          threatAssessedAt: null,
           updatedAt,
         },
       },

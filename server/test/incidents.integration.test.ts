@@ -52,6 +52,9 @@ test(
       assert.equal(stored.extractionStatus, 'completed');
       assert.equal(stored.extractionFixtureMatched, true);
       assert.equal(stored.verificationStatus, 'unverified');
+      assert.equal(stored.threatLevel, 'high');
+      assert.equal(stored.threatAssessmentMethod, 'rules-v1');
+      assert.ok(stored.threatAssessedAt instanceof Date);
       assert.equal(stored.extractedDetails?.category, 'robbery');
     } finally {
       await collection.deleteOne({ submissionId });
