@@ -186,6 +186,30 @@ export function createApp(options: AppOptions) {
     },
   );
 
+  app.get('/api/admin/incidents', async (_request, response) => {
+    try {
+      if (!options.repository.listAdminIncidents) {
+        response.status(501).json({
+          error: {
+            code: 'NOT_IMPLEMENTED',
+            message: 'Incident listing is not supported by this repository.',
+          },
+        });
+        return;
+      }
+
+      const incidents = await options.repository.listAdminIncidents();
+      response.status(200).json({ incidents });
+    } catch {
+      response.status(500).json({
+        error: {
+          code: 'INCIDENT_FETCH_FAILED',
+          message: 'The incidents could not be retrieved from the database.',
+        },
+      });
+    }
+  });
+
   app.use((_request, response) => {
     response.status(404).json({ error: { code: 'NOT_FOUND', message: 'Not found.' } });
   });

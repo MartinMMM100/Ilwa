@@ -41,6 +41,12 @@ export class TestIncidentRepository implements IncidentRepository {
     incident.updatedAt = updatedAt;
   }
 
+  async listAdminIncidents(): Promise<IncidentDocument[]> {
+    return [...this.documents.values()]
+      .map(cloneIncident)
+      .sort((a, b) => b.reportedAt.getTime() - a.reportedAt.getTime());
+  }
+
   private findByReference(reportReference: string) {
     const incident = [...this.documents.values()].find(
       (candidate) => candidate.reportReference === reportReference,
