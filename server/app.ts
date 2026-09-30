@@ -4,6 +4,8 @@ import multer, { MulterError } from 'multer';
 import { extname } from 'node:path';
 
 import type { ExtractionMethod, IncidentRepository } from './incidents/model';
+import type { IncidentPhotoStore } from './incidents/photoStore';
+import { toPublicFeedItem } from './incidents/publicFeed';
 import { incidentRequestSchema } from './incidents/schema';
 import {
   SavedIncidentStatusUnknownError,
@@ -14,6 +16,7 @@ import { createDevelopmentReporterMiddleware } from './middleware/developmentRep
 import type { AudioTranscriber } from './transcription/openAiTranscriber';
 
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const SUPPORTED_AUDIO_EXTENSIONS = new Set([
   '.m4a',
   '.mp3',
@@ -24,6 +27,13 @@ const SUPPORTED_AUDIO_EXTENSIONS = new Set([
   '.wav',
   '.webm',
 ]);
+const SUPPORTED_PHOTO_MEDIA_TYPES = new Set([
+  'image/heic',
+  'image/heif',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
 
 class UnsupportedAudioTypeError extends Error {
   constructor() {
@@ -32,8 +42,16 @@ class UnsupportedAudioTypeError extends Error {
   }
 }
 
+class UnsupportedPhotoTypeError extends Error {
+  constructor() {
+    super('The photo must be a JPEG, PNG, WebP, HEIC, or HEIF image.');
+    this.name = 'UnsupportedPhotoTypeError';
+  }
+}
+
 type AppOptions = {
   repository: IncidentRepository;
+  photoStore?: IncidentPhotoStore;
   environment?: NodeJS.ProcessEnv;
   reporterMiddleware?: RequestHandler;
   extractor?: (description: string) => Promise<unknown>;
@@ -62,6 +80,17 @@ export function createApp(options: AppOptions) {
     fileFilter(_request, file, callback) {
       if (!SUPPORTED_AUDIO_EXTENSIONS.has(extname(file.originalname).toLowerCase())) {
         callback(new UnsupportedAudioTypeError());
+        return;
+      }
+      callback(null, true);
+    },
+  });
+  const photoUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_PHOTO_BYTES, files: 1, fields: 0 },
+    fileFilter(_request, file, callback) {
+      if (!SUPPORTED_PHOTO_MEDIA_TYPES.has(file.mimetype.toLowerCase())) {
+        callback(new UnsupportedPhotoTypeError());
         return;
       }
       callback(null, true);
@@ -146,6 +175,78 @@ export function createApp(options: AppOptions) {
   });
 
   app.post(
+    '/api/incidents/:reportReference/photo',
+    reporterMiddleware,
+    requireReporter,
+    photoUpload.single('photo'),
+    async (request, response) => {
+      if (!options.photoStore) {
+        response.status(503).json({
+          error: {
+            code: 'PHOTO_STORAGE_UNAVAILABLE',
+            message: 'Photo storage is not configured on this server.',
+          },
+        });
+        return;
+      }
+      if (!request.file) {
+        response.status(400).json({
+          error: { code: 'PHOTO_REQUIRED', message: 'Attach one incident photo.' },
+        });
+        return;
+      }
+      const reportReference = request.params.reportReference;
+      if (typeof reportReference !== 'string') {
+        response.status(400).json({
+          error: { code: 'INVALID_REFERENCE', message: 'Provide a valid report reference.' },
+        });
+        return;
+      }
+
+      try {
+        const incident = await options.repository.findByReportReference(reportReference);
+        if (!incident || incident.reporterId !== request.reporterId) {
+          response.status(404).json({
+            error: { code: 'INCIDENT_NOT_FOUND', message: 'That incident could not be found.' },
+          });
+          return;
+        }
+
+        await options.photoStore.save(incident.reportReference, {
+          bytes: request.file.buffer,
+          fileName: request.file.originalname,
+          mediaType: request.file.mimetype,
+        });
+        const attached = await options.repository.attachPhoto(
+          incident.reportReference,
+          request.reporterId!,
+          {
+            fileName: request.file.originalname,
+            mediaType: request.file.mimetype,
+            byteLength: request.file.size,
+          },
+          new Date(),
+        );
+        if (!attached) {
+          await options.photoStore.delete(incident.reportReference);
+          response.status(404).json({
+            error: { code: 'INCIDENT_NOT_FOUND', message: 'That incident could not be found.' },
+          });
+          return;
+        }
+
+        response.status(201).json({
+          photo: { url: `/api/feed/${encodeURIComponent(incident.reportReference)}/photo` },
+        });
+      } catch {
+        response.status(500).json({
+          error: { code: 'PHOTO_UPLOAD_FAILED', message: 'The incident photo could not be saved.' },
+        });
+      }
+    },
+  );
+
+  app.post(
     '/api/transcriptions',
     reporterMiddleware,
     requireReporter,
@@ -186,6 +287,74 @@ export function createApp(options: AppOptions) {
     },
   );
 
+  app.get('/api/feed', async (request, response) => {
+    const limit = parseFeedLimit(request.query.limit);
+    if (limit === null) {
+      response.status(400).json({
+        error: {
+          code: 'INVALID_FEED_LIMIT',
+          message: 'Feed limit must be a whole number between 1 and 50.',
+        },
+      });
+      return;
+    }
+
+    try {
+      const incidents = await options.repository.listPublicFeed(limit);
+      const items = incidents
+        .map(toPublicFeedItem)
+        .filter((item) => item !== null);
+
+      response.status(200).json({ items });
+    } catch {
+      response.status(500).json({
+        error: {
+          code: 'FEED_FETCH_FAILED',
+          message: 'The live feed could not be retrieved.',
+        },
+      });
+    }
+  });
+
+  app.get('/api/feed/:reportReference/photo', async (request, response) => {
+    if (!options.photoStore) {
+      response.status(404).json({ error: { code: 'PHOTO_NOT_FOUND', message: 'Photo not found.' } });
+      return;
+    }
+    const reportReference = request.params.reportReference;
+    if (typeof reportReference !== 'string') {
+      response.status(404).json({ error: { code: 'PHOTO_NOT_FOUND', message: 'Photo not found.' } });
+      return;
+    }
+
+    try {
+      const incident = await options.repository.findByReportReference(reportReference);
+      if (
+        !incident ||
+        incident.extractionStatus !== 'completed' ||
+        !incident.extractedDetails ||
+        !incident.photo
+      ) {
+        response.status(404).json({ error: { code: 'PHOTO_NOT_FOUND', message: 'Photo not found.' } });
+        return;
+      }
+
+      const photo = await options.photoStore.find(incident.reportReference);
+      if (!photo) {
+        response.status(404).json({ error: { code: 'PHOTO_NOT_FOUND', message: 'Photo not found.' } });
+        return;
+      }
+
+      response.setHeader('Content-Type', photo.mediaType);
+      response.setHeader('Cache-Control', 'public, max-age=300');
+      response.status(200).send(photo.bytes);
+    } catch {
+      response.status(500).json({
+        error: { code: 'PHOTO_FETCH_FAILED', message: 'The incident photo could not be retrieved.' },
+      });
+    }
+  });
+
   app.get('/api/admin/incidents', async (_request, response) => {
     try {
       if (!options.repository.listAdminIncidents) {
@@ -216,10 +385,13 @@ export function createApp(options: AppOptions) {
 
   const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
     if (error instanceof MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      const isPhoto = error.field === 'photo';
       response.status(413).json({
         error: {
-          code: 'AUDIO_TOO_LARGE',
-          message: 'The recording must be 25 MB or smaller.',
+          code: isPhoto ? 'PHOTO_TOO_LARGE' : 'AUDIO_TOO_LARGE',
+          message: isPhoto
+            ? 'The photo must be 5 MB or smaller.'
+            : 'The recording must be 25 MB or smaller.',
         },
       });
       return;
@@ -228,6 +400,13 @@ export function createApp(options: AppOptions) {
     if (error instanceof UnsupportedAudioTypeError) {
       response.status(400).json({
         error: { code: 'UNSUPPORTED_AUDIO_TYPE', message: error.message },
+      });
+      return;
+    }
+
+    if (error instanceof UnsupportedPhotoTypeError) {
+      response.status(400).json({
+        error: { code: 'UNSUPPORTED_PHOTO_TYPE', message: error.message },
       });
       return;
     }
@@ -253,6 +432,17 @@ export function createApp(options: AppOptions) {
   app.use(errorHandler);
 
   return app;
+}
+
+function parseFeedLimit(value: unknown) {
+  if (value === undefined) {
+    return 30;
+  }
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return null;
+  }
+  const limit = Number(value);
+  return Number.isInteger(limit) && limit >= 1 && limit <= 50 ? limit : null;
 }
 
 function createCorsMiddleware(environment: NodeJS.ProcessEnv) {

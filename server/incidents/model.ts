@@ -6,6 +6,12 @@ import type { ThreatAssessmentMethod, ThreatLevel } from './threatAssessment';
 export type ExtractionStatus = 'pending' | 'completed' | 'failed';
 export type ExtractionMethod = 'mock-v1' | 'openai-responses-v1';
 
+export type IncidentPhotoMetadata = {
+  fileName: string;
+  mediaType: string;
+  byteLength: number;
+};
+
 export type IncidentDocument = {
   _id?: ObjectId;
   submissionId: string;
@@ -25,6 +31,7 @@ export type IncidentDocument = {
   extractionModel: string | null;
   extractionFixtureMatched: boolean | null;
   extractedDetails: IncidentDetails | null;
+  photo?: IncidentPhotoMetadata | null;
 };
 
 export type StoredIncident = Pick<
@@ -42,6 +49,7 @@ export interface IncidentRepository {
   ensureIndexes(): Promise<void>;
   insertPending(incident: IncidentDocument): Promise<StoredIncident>;
   findBySubmissionId(submissionId: string): Promise<StoredIncident | null>;
+  findByReportReference(reportReference: string): Promise<IncidentDocument | null>;
   completeExtraction(
     reportReference: string,
     details: IncidentDetails,
@@ -51,5 +59,12 @@ export interface IncidentRepository {
     updatedAt: Date,
   ): Promise<void>;
   failExtraction(reportReference: string, updatedAt: Date): Promise<void>;
+  attachPhoto(
+    reportReference: string,
+    reporterId: string,
+    photo: IncidentPhotoMetadata,
+    updatedAt: Date,
+  ): Promise<boolean>;
+  listPublicFeed(limit: number): Promise<IncidentDocument[]>;
   listAdminIncidents?(): Promise<IncidentDocument[]>;
 }

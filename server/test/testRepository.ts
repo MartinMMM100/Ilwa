@@ -1,6 +1,11 @@
 import { DuplicateSubmissionError } from '../incidents/mongoRepository';
 import type { IncidentDetails } from '../incidents/schema';
-import type { IncidentDocument, IncidentRepository, StoredIncident } from '../incidents/model';
+import type {
+  IncidentDocument,
+  IncidentPhotoMetadata,
+  IncidentRepository,
+  StoredIncident,
+} from '../incidents/model';
 import type {
   ThreatAssessmentMethod,
   ThreatLevel,
@@ -22,6 +27,13 @@ export class TestIncidentRepository implements IncidentRepository {
   async findBySubmissionId(submissionId: string): Promise<StoredIncident | null> {
     const incident = this.documents.get(submissionId);
     return incident ? toStoredIncident(incident) : null;
+  }
+
+  async findByReportReference(reportReference: string): Promise<IncidentDocument | null> {
+    const incident = [...this.documents.values()].find(
+      (candidate) => candidate.reportReference === reportReference,
+    );
+    return incident ? cloneIncident(incident) : null;
   }
 
   async completeExtraction(
@@ -53,10 +65,39 @@ export class TestIncidentRepository implements IncidentRepository {
     incident.updatedAt = updatedAt;
   }
 
+  async attachPhoto(
+    reportReference: string,
+    reporterId: string,
+    photo: IncidentPhotoMetadata,
+    updatedAt: Date,
+  ) {
+    const incident = [...this.documents.values()].find(
+      (candidate) =>
+        candidate.reportReference === reportReference && candidate.reporterId === reporterId,
+    );
+    if (!incident) {
+      return false;
+    }
+    incident.photo = { ...photo };
+    incident.updatedAt = updatedAt;
+    return true;
+  }
+
   async listAdminIncidents(): Promise<IncidentDocument[]> {
     return [...this.documents.values()]
       .map(cloneIncident)
       .sort((a, b) => b.reportedAt.getTime() - a.reportedAt.getTime());
+  }
+
+  async listPublicFeed(limit: number): Promise<IncidentDocument[]> {
+    return [...this.documents.values()]
+      .filter(
+        (incident) =>
+          incident.extractionStatus === 'completed' && incident.extractedDetails !== null,
+      )
+      .map(cloneIncident)
+      .sort((a, b) => b.reportedAt.getTime() - a.reportedAt.getTime())
+      .slice(0, limit);
   }
 
   private findByReference(reportReference: string) {
@@ -81,6 +122,7 @@ function cloneIncident(incident: IncidentDocument): IncidentDocument {
     extractedDetails: incident.extractedDetails
       ? { ...incident.extractedDetails, itemsTaken: [...incident.extractedDetails.itemsTaken] }
       : null,
+    photo: incident.photo ? { ...incident.photo } : incident.photo,
   };
 }
 

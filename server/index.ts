@@ -7,6 +7,10 @@ import { closeMongoClient, getMongoClient } from './db';
 import { resolveIncidentExtractor } from './incidents/extractorConfig';
 import { MongoIncidentRepository } from './incidents/mongoRepository';
 import type { IncidentDocument } from './incidents/model';
+import {
+  type IncidentPhotoDocument,
+  MongoIncidentPhotoStore,
+} from './incidents/photoStore';
 import { createOpenAITranscriber } from './transcription/openAiTranscriber';
 
 async function start() {
@@ -14,8 +18,11 @@ async function start() {
   const databaseName = requireEnvironmentVariable('MONGODB_DB');
   const port = parsePort(process.env.PORT);
   const mongoClient = await getMongoClient(mongoUri);
-  const incidents = mongoClient.db(databaseName).collection<IncidentDocument>('incidents');
+  const database = mongoClient.db(databaseName);
+  const incidents = database.collection<IncidentDocument>('incidents');
+  const incidentPhotos = database.collection<IncidentPhotoDocument>('incidentPhotos');
   const repository = new MongoIncidentRepository(incidents);
+  const photoStore = new MongoIncidentPhotoStore(incidentPhotos);
   const extraction = resolveIncidentExtractor(process.env);
   const transcriptionModel = process.env.OPENAI_TRANSCRIPTION_MODEL?.trim() || 'gpt-transcribe';
   const transcriber = process.env.OPENAI_API_KEY?.trim()
@@ -25,9 +32,9 @@ async function start() {
       })
     : undefined;
 
-  await repository.ensureIndexes();
+  await Promise.all([repository.ensureIndexes(), photoStore.ensureIndexes()]);
 
-  const server = createServer(createApp({ repository, transcriber, ...extraction }));
+  const server = createServer(createApp({ repository, photoStore, transcriber, ...extraction }));
   server.listen(port, () => {
     const extractorLabel = extraction.extractionModel
       ? `${extraction.extractionMethod} (${extraction.extractionModel})`

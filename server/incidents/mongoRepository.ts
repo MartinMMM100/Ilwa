@@ -1,7 +1,12 @@
 import { type Collection, MongoServerError } from 'mongodb';
 
 import type { IncidentDetails } from './schema';
-import type { IncidentDocument, IncidentRepository, StoredIncident } from './model';
+import type {
+  IncidentDocument,
+  IncidentPhotoMetadata,
+  IncidentRepository,
+  StoredIncident,
+} from './model';
 import type { ThreatAssessmentMethod, ThreatLevel } from './threatAssessment';
 
 export class DuplicateSubmissionError extends Error {
@@ -22,6 +27,10 @@ export class MongoIncidentRepository implements IncidentRepository {
         { isDemoData: 1, threatLevel: 1, reportedAt: -1 },
         { name: 'map_threat_recency' },
       ),
+      this.incidents.createIndex(
+        { extractionStatus: 1, reportedAt: -1 },
+        { name: 'public_feed_recency' },
+      ),
     ]);
   }
 
@@ -40,6 +49,10 @@ export class MongoIncidentRepository implements IncidentRepository {
   async findBySubmissionId(submissionId: string): Promise<StoredIncident | null> {
     const incident = await this.incidents.findOne({ submissionId });
     return incident ? toStoredIncident(incident) : null;
+  }
+
+  async findByReportReference(reportReference: string): Promise<IncidentDocument | null> {
+    return this.incidents.findOne({ reportReference });
   }
 
   async completeExtraction(
@@ -91,8 +104,29 @@ export class MongoIncidentRepository implements IncidentRepository {
     }
   }
 
+  async attachPhoto(
+    reportReference: string,
+    reporterId: string,
+    photo: IncidentPhotoMetadata,
+    updatedAt: Date,
+  ) {
+    const result = await this.incidents.updateOne(
+      { reportReference, reporterId },
+      { $set: { photo, updatedAt } },
+    );
+    return result.matchedCount === 1;
+  }
+
   async listAdminIncidents(): Promise<IncidentDocument[]> {
     return this.incidents.find({}).sort({ reportedAt: -1 }).toArray();
+  }
+
+  async listPublicFeed(limit: number): Promise<IncidentDocument[]> {
+    return this.incidents
+      .find({ extractionStatus: 'completed', extractedDetails: { $ne: null } })
+      .sort({ reportedAt: -1 })
+      .limit(limit)
+      .toArray();
   }
 }
 

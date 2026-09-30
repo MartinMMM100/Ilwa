@@ -82,6 +82,7 @@ export async function submitIncident(
     extractionModel,
     extractionFixtureMatched: null,
     extractedDetails: null,
+    photo: null,
   };
 
   try {

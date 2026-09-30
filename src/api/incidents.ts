@@ -1,8 +1,16 @@
+import { Platform } from 'react-native';
+
 export type IncidentSubmissionResult = {
   reference: string;
   status: 'submitted';
   verificationStatus: 'unverified';
   extractionStatus: 'pending' | 'completed' | 'failed';
+};
+
+export type IncidentPhotoAttachment = {
+  uri: string;
+  name: string;
+  mediaType: string;
 };
 
 export function createSubmissionId() {
@@ -31,6 +39,38 @@ export async function submitIncident(
   }
 
   return payload.report;
+}
+
+export async function uploadIncidentPhoto(
+  reportReference: string,
+  attachment: IncidentPhotoAttachment,
+) {
+  const apiBaseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+  const form = new FormData();
+
+  if (Platform.OS === 'web') {
+    const photoResponse = await fetch(attachment.uri);
+    const photoBlob = await photoResponse.blob();
+    form.append('photo', photoBlob, attachment.name);
+  } else {
+    form.append(
+      'photo',
+      {
+        uri: attachment.uri,
+        name: attachment.name,
+        type: attachment.mediaType,
+      } as unknown as Blob,
+    );
+  }
+
+  const response = await fetch(
+    `${apiBaseUrl}/api/incidents/${encodeURIComponent(reportReference)}/photo`,
+    { method: 'POST', body: form },
+  );
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    throw new Error(readApiError(payload));
+  }
 }
 
 function isIncidentResponse(

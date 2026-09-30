@@ -4,6 +4,7 @@ import type { Server } from 'node:http';
 import test from 'node:test';
 
 import { createApp } from '../app';
+import type { IncidentPhoto, IncidentPhotoStore } from '../incidents/photoStore';
 import { TestIncidentRepository } from './testRepository';
 
 test('POST /api/incidents rejects invalid input without writing a report', async () => {
@@ -169,6 +170,79 @@ test('POST /api/transcriptions reports provider failure without creating an inci
     assert.equal(repository.documents.size, 0);
   });
 });
+
+test('incident photos are stored and served through the public feed', async () => {
+  const repository = new TestIncidentRepository();
+  const photoStore = new TestIncidentPhotoStore();
+  const app = createApp({
+    repository,
+    photoStore,
+    environment: { NODE_ENV: 'test', DEV_REPORTER_ID: 'development-only-test-resident' },
+  });
+
+  await withServer(app.listen(0), async (baseUrl) => {
+    const incidentResponse = await fetch(`${baseUrl}/api/incidents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        description:
+          'Two guys robbed me near Park Station last night around 9. They took my phone and one had a knife.',
+        submissionId: 'photo-upload-submission-1',
+      }),
+    });
+    assert.equal(incidentResponse.status, 201);
+    const incidentBody = (await incidentResponse.json()) as { report: { reference: string } };
+
+    const form = new FormData();
+    form.append(
+      'photo',
+      new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' }),
+      'incident.jpg',
+    );
+    const uploadResponse = await fetch(
+      `${baseUrl}/api/incidents/${incidentBody.report.reference}/photo`,
+      { method: 'POST', body: form },
+    );
+    assert.equal(uploadResponse.status, 201);
+
+    const savedIncident = await repository.findByReportReference(incidentBody.report.reference);
+    assert.equal(savedIncident?.photo?.mediaType, 'image/jpeg');
+    assert.equal(savedIncident?.photo?.byteLength, 4);
+
+    const feedResponse = await fetch(`${baseUrl}/api/feed`);
+    const feedBody = (await feedResponse.json()) as {
+      items: { id: string; photoUrl: string | null }[];
+    };
+    assert.equal(
+      feedBody.items.find((item) => item.id === incidentBody.report.reference)?.photoUrl,
+      `/api/feed/${incidentBody.report.reference}/photo`,
+    );
+
+    const photoResponse = await fetch(
+      `${baseUrl}/api/feed/${incidentBody.report.reference}/photo`,
+    );
+    assert.equal(photoResponse.status, 200);
+    assert.equal(photoResponse.headers.get('content-type'), 'image/jpeg');
+    assert.deepEqual(new Uint8Array(await photoResponse.arrayBuffer()), new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
+  });
+});
+
+class TestIncidentPhotoStore implements IncidentPhotoStore {
+  private readonly photos = new Map<string, IncidentPhoto>();
+
+  async save(reportReference: string, photo: IncidentPhoto) {
+    this.photos.set(reportReference, { ...photo, bytes: Buffer.from(photo.bytes) });
+  }
+
+  async find(reportReference: string) {
+    const photo = this.photos.get(reportReference);
+    return photo ? { ...photo, bytes: Buffer.from(photo.bytes) } : null;
+  }
+
+  async delete(reportReference: string) {
+    this.photos.delete(reportReference);
+  }
+}
 
 async function withServer(server: Server, callback: (baseUrl: string) => Promise<void>) {
   await once(server, 'listening');

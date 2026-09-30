@@ -24,8 +24,10 @@ import {
 import type { Route } from '../../App';
 import {
   createSubmissionId,
+  type IncidentPhotoAttachment,
   type IncidentSubmissionResult,
   submitIncident,
+  uploadIncidentPhoto,
 } from '../api/incidents';
 import { transcribeIncidentAudio } from '../api/transcriptions';
 import { AppHeader } from '../components/AppHeader';
@@ -37,7 +39,8 @@ type InputMode = 'text' | 'voice';
 export function ReportScreen({ navigate }: ReportScreenProps) {
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [description, setDescription] = useState('');
-  const [attachment, setAttachment] = useState<{ uri: string; name: string } | null>(null);
+  const [attachment, setAttachment] = useState<IncidentPhotoAttachment | null>(null);
+  const [photoUploadStatus, setPhotoUploadStatus] = useState<'uploaded' | 'failed' | null>(null);
   const [voiceUri, setVoiceUri] = useState<string | null>(null);
   const [submissionId, setSubmissionId] = useState(createSubmissionId);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -135,7 +138,18 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      setAttachment({ uri: asset.uri, name: asset.fileName ?? 'Photo attached' });
+      if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
+        setErrorMessage('Choose a photo that is 5 MB or smaller.');
+        return;
+      }
+      const name = asset.fileName ?? 'incident-photo.jpg';
+      setAttachment({
+        uri: asset.uri,
+        name,
+        mediaType: asset.mimeType ?? inferImageMediaType(name),
+      });
+      setPhotoUploadStatus(null);
+      setErrorMessage(null);
     }
   };
 
@@ -163,6 +177,17 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
 
     try {
       const report = await submitIncident(description, submissionId);
+      if (attachment) {
+        try {
+          await uploadIncidentPhoto(report.reference, attachment);
+          setPhotoUploadStatus('uploaded');
+        } catch (photoError) {
+          setPhotoUploadStatus('failed');
+          const detail =
+            photoError instanceof Error ? photoError.message : 'The photo could not be uploaded.';
+          setErrorMessage(`${detail} The incident report itself was saved successfully.`);
+        }
+      }
       setSavedReport(report);
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'The report could not be submitted right now.';
@@ -178,6 +203,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
     setDescription('');
     setInputMode('text');
     setAttachment(null);
+    setPhotoUploadStatus(null);
     setVoiceUri(null);
     setTranscriptionFailed(false);
     setSubmissionId(createSubmissionId());
@@ -324,7 +350,7 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
           />
         </Field>
 
-        <Field label="Photo or attachment" helper="Optional · kept on this device">
+        <Field label="Photo or attachment" helper="Optional · up to 5 MB">
           <Pressable
             accessibilityRole="button"
             disabled={isSubmitting || isTranscribing || Boolean(savedReport)}
@@ -381,7 +407,9 @@ export function ReportScreen({ navigate }: ReportScreenProps) {
             <View style={styles.stateCopy}>
               <Text style={styles.successTitle}>Report saved</Text>
               <Text selectable style={styles.referenceText}>Reference: {savedReport.reference}</Text>
-              <Text style={styles.successDetail}>{getSuccessDetail(savedReport)}</Text>
+              <Text style={styles.successDetail}>
+                {getSuccessDetail(savedReport, photoUploadStatus)}
+              </Text>
             </View>
           </View>
         ) : (
@@ -522,14 +550,32 @@ function formatDuration(durationMillis: number) {
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-function getSuccessDetail(report: IncidentSubmissionResult) {
+function getSuccessDetail(
+  report: IncidentSubmissionResult,
+  photoUploadStatus: 'uploaded' | 'failed' | null,
+) {
+  const photoDetail =
+    photoUploadStatus === 'uploaded'
+      ? ' The supporting photo was uploaded.'
+      : photoUploadStatus === 'failed'
+        ? ' The report was saved, but its photo was not uploaded.'
+        : '';
   if (report.extractionStatus === 'failed') {
-    return 'The original paragraph is saved and remains unverified. Structured extraction could not be completed; do not resubmit this report.';
+    return `The original paragraph is saved and remains unverified. Structured extraction could not be completed; do not resubmit this report.${photoDetail}`;
   }
   if (report.extractionStatus === 'pending') {
-    return 'The original paragraph is saved and remains unverified. Structured processing is still pending; do not resubmit this report.';
+    return `The original paragraph is saved and remains unverified. Structured processing is still pending; do not resubmit this report.${photoDetail}`;
   }
-  return 'The original paragraph and its structured details are saved. The report remains unverified.';
+  return `The original paragraph and its structured details are saved. The report remains unverified.${photoDetail}`;
+}
+
+function inferImageMediaType(fileName: string) {
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  if (extension === 'png') return 'image/png';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'heic') return 'image/heic';
+  if (extension === 'heif') return 'image/heif';
+  return 'image/jpeg';
 }
 
 const styles = StyleSheet.create({
