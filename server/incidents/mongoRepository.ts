@@ -90,6 +90,10 @@ export class MongoIncidentRepository implements IncidentRepository {
       throw new Error('Saved incident could not be found for failure update.');
     }
   }
+
+  async listAdminIncidents(): Promise<IncidentDocument[]> {
+    return this.incidents.find({}).sort({ reportedAt: -1 }).toArray();
+  }
 }
 
 function toStoredIncident(incident: IncidentDocument): StoredIncident {

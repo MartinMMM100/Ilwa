@@ -51,4 +51,5 @@ export interface IncidentRepository {
     updatedAt: Date,
   ): Promise<void>;
   failExtraction(reportReference: string, updatedAt: Date): Promise<void>;
+  listAdminIncidents?(): Promise<IncidentDocument[]>;
 }
