@@ -1,3 +1,5 @@
+import { suburbs } from '../shared/safetyMap';
+import { aggregateDemoMap } from './map/aggregate';
 import cors from 'cors';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import multer, { MulterError } from 'multer';
@@ -101,6 +103,20 @@ export function createApp(options: AppOptions) {
   app.disable('x-powered-by');
   app.use(createCorsMiddleware(environment));
   app.use(express.json({ limit: '16kb' }));
+
+  app.get('/api/map/areas/:areaId', async (request, response) => {
+    const area = suburbs.find((candidate) => candidate.id === request.params.areaId);
+    if (!area) {
+      response.status(404).json({ error: { code: 'UNKNOWN_AREA', message: 'This suburb is not in the pilot.' } });
+      return;
+    }
+    try {
+      const incidents = area.id === 'braamfontein' ? await options.repository.listMapIncidents() : [];
+      response.json(aggregateDemoMap(incidents, area.id));
+    } catch {
+      response.status(503).json({ error: { code: 'MAP_UNAVAILABLE', message: 'Could not load area reports. Try again.' } });
+    }
+  });
 
   app.post('/api/incidents', reporterMiddleware, requireReporter, async (request, response) => {
     const parsedRequest = incidentRequestSchema.safeParse(request.body);

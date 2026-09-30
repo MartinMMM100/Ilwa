@@ -1,0 +1,761 @@
+diff --git a/.env.example b/.env.example
+--- a/.env.example
++++ b/.env.example
+@@ -23,8 +23,4 @@
+ MONGODB_TEST_URI=mongodb://127.0.0.1:27017
+ MONGODB_TEST_DB=ilwa_test
+ 
+-# Mobile Google Maps keys, read by app.config.ts at native build time.
+-# Restrict Android key to za.co.ilwa.safetymap + signing SHA-1; iOS key to bundle ID.
+-# These mobile SDK keys are embedded in the app binary; application restrictions are essential.
+-GOOGLE_MAPS_ANDROID_API_KEY=
+-GOOGLE_MAPS_IOS_API_KEY=
++# The OpenFreeMap street map needs no API key. Keep MongoDB/OpenAI settings server-only.
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -139,11 +139,11 @@
+ 
+ ## Included flows
+ 
+-- Google Maps on Android and iOS with searchable Johannesburg pilot suburbs
++- MapLibre / OpenFreeMap street maps on Android and iOS with searchable Johannesburg pilot suburbs
+ - Fading, geographically anchored demo concern zones with tap-to-view details
+ - MongoDB-backed aggregate map data, refresh, retry, and empty states
+ - Existing admin dashboard, text reports, AI extraction and voice transcription
+ - The news feed remains a static prototype
+ 
+-See [mobile-google-maps.md](docs/mobile-google-maps.md) for API-key setup, native builds,
++See [mobile-free-maps.md](docs/mobile-free-maps.md) for no-key Expo Go setup,
+ patch application, scoring rules and device checks.
+diff --git a/app.config.ts b/app.config.ts
+--- a/app.config.ts
++++ b/app.config.ts
+@@ -1,17 +1,8 @@
+-import 'dotenv/config';
+ import type { ConfigContext, ExpoConfig } from 'expo/config';
+ 
+-export default ({ config }: ConfigContext): ExpoConfig => {
+-  const androidKey = process.env.GOOGLE_MAPS_ANDROID_API_KEY?.trim();
+-  const iosKey = process.env.GOOGLE_MAPS_IOS_API_KEY?.trim();
+-  return {
+-    ...config,
+-    name: config.name ?? 'ILWA SafetyMap',
+-    slug: config.slug ?? 'ilwa-safety-map',
+-    plugins: [...(config.plugins ?? []), ['react-native-maps', {
+-      ...(androidKey ? { androidGoogleMapsApiKey: androidKey } : {}),
+-      ...(iosKey ? { iosGoogleMapsApiKey: iosKey } : {}),
+-    }]],
+-    extra: { ...config.extra, googleMapsAndroidConfigured: Boolean(androidKey), googleMapsIosConfigured: Boolean(iosKey) },
+-  };
+-};
++// No map keys or billing configuration. Existing audio/image plugins remain in app.json.
++export default ({ config }: ConfigContext): ExpoConfig => ({
++  ...config,
++  name: config.name ?? 'ILWA SafetyMap',
++  slug: config.slug ?? 'ilwa-safety-map',
++});
+diff --git a/docs/mobile-free-maps.md b/docs/mobile-free-maps.md
+new file mode 100644
+--- /dev/null
++++ b/docs/mobile-free-maps.md
+@@ -0,0 +1,129 @@
++# Free mobile street maps: MapLibre + OpenFreeMap
++
++No Google Cloud account, payment card, map API key, or map-specific native SDK build is
++needed for this version. OpenFreeMap's public service currently advertises no registration,
++API keys or request limits. It is community-funded and provided as-is. Keep its source
++attribution visible and recheck its published terms before a wider rollout.
++
++## Apply this migration
++
++This patch is for the project **after** applying `ilwa-google-mobile-map.patch`. Keep your
++current feature branch and local Google-map changes; the migration modifies those files.
++It does not change your `.env`, MongoDB data, admin dashboard or transcription behavior.
++
++```bash
++git apply --check --ignore-space-change ../ilwa-maplibre-migration.patch
++git apply --ignore-space-change ../ilwa-maplibre-migration.patch
++npm ci
++```
++
++Use the actual path to the patch. Stop if the check fails; it means your source differs from
++the expected Google-map version. Do not force it or apply both versions over each other.
++The migration removes the Google Maps package and build-key configuration and replaces
++the earlier Google setup document with this one.
++
++## Configure the API, not the map
++
++Keep your existing MongoDB and OpenAI settings in local `.env`. On a physical phone:
++
++```dotenv
++EXPO_PUBLIC_API_URL=http://YOUR_COMPUTER_LAN_IP:4000
++```
++
++The phone and API computer must be on a mutually reachable network. `localhost` on the
++phone points at the phone, not your computer. Google Maps key variables can be removed
++from `.env`; this version does not read them or contact Google Maps.
++
++First terminal:
++
++```bash
++npm run seed:incidents
++npm run server
++```
++
++Second terminal:
++
++```bash
++npx expo start --clear
++```
++
++Open the project in **Expo Go** on Android or iPhone. Use an Expo Go version compatible
++with this project's Expo SDK 57. The map uses `react-native-webview`, included in Expo Go;
++it does not use MapLibre React Native's custom native SDK.
++
++If you already generated `android` or `ios` directories for the old Google version, opening
++Expo Go does not use those builds. A previously installed standalone binary will not gain
++the WebView dependency until you rebuild it. For a later standalone build, regenerate its
++native configuration using your team's Expo workflow and preserve any native customizations.
++An iOS standalone build still needs a Mac/Xcode or a cloud build service, unlike Expo Go testing.
++
++## How it works
++
++A mobile WebView hosts the pinned MapLibre GL JS 6.11.2 renderer. It loads street tiles,
++labels, fonts and sprites from the OpenFreeMap Liberty style. Pan, pinch zoom and suburb
++recentering work on both platforms. No device geolocation permission is requested.
++
++The renderer JavaScript/CSS come from jsDelivr; the style and map resources come from
++OpenFreeMap. Internet access is required. This is not an offline map. The WebView contains
++only public aggregate demo zones; MongoDB credentials and OpenAI keys remain on the server.
++Map renderer/tile failures and API failures have separate retry messages.
++
++The map receives suburb and zone updates through a validated message bridge. Existing
++zones clear when an area changes or when loading fails. Twelve low-opacity geographic
++polygons per zone form the fading radar appearance; radii remain in metres while zooming.
++Overlapping zones blend visually. Zone taps show the nearest applicable centre's metadata.
++The coloured overlay sits below map text so street labels remain readable.
++
++This is a radial concern overlay, not a continuous statistical kernel heatmap. Compared
++with a native MapLibre SDK, it prioritizes easy Expo Go testing; later profiling on older
++phones can inform whether a native renderer is worthwhile.
++
++## Data and colours
++
++`GET /api/map/areas/:areaId` returns fictional seed aggregates only. It excludes real/private
++submissions, reporter identities, narratives, incomplete/unmapped records, future-dated
++records and records older than 30 days. Only Braamfontein currently has mapped seed data.
++Existing seeds are matched to approximate landmark centres without a database migration.
++
++The time window uses reportedAt (submission date), not an inferred incident timestamp.
++Old seed records eventually expire; rerunning the seed script does not reset their dates.
++
++Demo heuristic per landmark:
++
++- category weights: robbery/assault 5, vehicle theft 3, theft 2, vandalism/suspicious
++  activity/infrastructure faults 1, other unclear 0.5;
++- contribution decays with a 14-day half-life;
++- lower concern below 3, elevated from 3 to below 8, higher from 8;
++- illustrative radius: 140 + 15 metres per report, capped at 300 metres.
++
++Green means lower reported concern in the fictional dataset, amber elevated, red higher.
++Uncoloured means insufficient data. These are prototype heuristics, not predictions of
++crime or guarantees of safety. Zone radius does not establish a danger boundary. Adding
++real reports requires structured approximate location/time, moderation and a privacy-aware
++public aggregation policy; do not repurpose the demo matcher to infer survivor locations.
++
++## Verify before committing
++
++```bash
++npm run typecheck
++npm test
++```
++
++On both phones, check street tiles and attribution, pan/zoom, suburb search, fading zones,
++zone taps, hide/show and recentring. Select Melville to check the empty state; turn off the
++API and refresh to check retry behavior. Check admin and report/transcription flows.
++
++Once those checks pass, review `git diff`, commit the intended source changes and open a
++pull request. Keep `.env` out of Git; `.env.example` contains public configuration guidance.
++
++Automated verification: TypeScript, 25 tests, and Android/iOS JavaScript bundles passed.
++Live MongoDB verification was skipped because no test database is configured. Renderer URL
++availability was checked. WebView tile rendering and gestures still require device checks.
++
++References:
++
++- https://openfreemap.org/
++- https://openfreemap.org/tos/
++- https://openfreemap.org/quick_start/
++- https://docs.expo.dev/versions/latest/sdk/webview/
++- https://maplibre.org/maplibre-gl-js/docs/
+diff --git a/docs/mobile-google-maps.md b/docs/mobile-google-maps.md
+deleted file mode 100644
+--- a/docs/mobile-google-maps.md
++++ /dev/null
+@@ -1,154 +0,0 @@
+-# Mobile Google Maps and demo concern zones
+-
+-This patch targets the latest uploaded ILWA source, including the admin and transcription
+-features. Apply it instead of the earlier schematic-map patch. It does not modify your `.env`.
+-
+-## Apply to the team project
+-
+-Start with a clean worktree on a feature branch:
+-
+-```bash
+-git switch main
+-git pull --ff-only
+-git switch -c feature/google-mobile-map
+-git apply --check --ignore-space-change ../ilwa-google-mobile-map.patch
+-git apply --ignore-space-change ../ilwa-google-mobile-map.patch
+-npm ci
+-npm run typecheck
+-npm test
+-```
+-
+-Use the actual path to the downloaded patch. If the check fails, the branch has diverged
+-from the uploaded source; resolve that before applying. Do not apply the earlier map patch
+-on top of this one. Review `git diff`, commit the intended changes, push the branch, and
+-open a pull request into main.
+-
+-## Google Cloud setup
+-
+-Create or use a Google Cloud project with billing enabled. Enable **Maps SDK for Android**
+-and **Maps SDK for iOS**. Check Google's current pricing and set quota/budget monitoring
+-for your project before distributing the app.
+-
+-Create two separate API keys:
+-
+-- Android: restrict to Maps SDK for Android and Android apps. Use package
+-  `za.co.ilwa.safetymap` and the SHA-1 certificate fingerprint for the signing key used
+-  by the build. Development and Play Store signing certificates may differ.
+-- iOS: restrict to Maps SDK for iOS and iOS apps with bundle identifier
+-  `za.co.ilwa.safetymap`.
+-
+-In your local `.env`, keep the existing MongoDB and transcription configuration and add:
+-
+-```dotenv
+-GOOGLE_MAPS_ANDROID_API_KEY=your_android_maps_key
+-GOOGLE_MAPS_IOS_API_KEY=your_ios_maps_key
+-EXPO_PUBLIC_API_URL=http://YOUR_COMPUTER_LAN_IP:4000
+-```
+-
+-These are mobile SDK keys, embedded in the native binary. They do not belong to the same
+-secret category as MongoDB passwords or OpenAI server keys; application and API
+-restrictions protect their use. Do not commit your `.env`. `app.config.ts` reads the values
+-at build time and passes them to the react-native-maps config plugin while preserving the
+-existing app.json plugins and app identifiers. Supply the same variables in a remote build
+-service if you use one. Key changes require rebuilding the native binary.
+-
+-## Run the API and seed data
+-
+-From the project directory:
+-
+-```bash
+-npm run seed:incidents
+-npm run server
+-```
+-
+-Keep the API running. The phone and computer must share a reachable network. A phone's
+-`localhost` is the phone, so use your computer's LAN IP in `EXPO_PUBLIC_API_URL`.
+-
+-## Build the mobile apps
+-
+-Android, with Android Studio/SDK and a device or emulator ready:
+-
+-```bash
+-npx expo run:android
+-```
+-
+-For a connected device use `npx expo run:android --device`.
+-
+-iOS, on a Mac with Xcode and the required signing setup:
+-
+-```bash
+-npx expo run:ios
+-```
+-
+-For a connected iPhone use `npx expo run:ios --device`. From Windows, use a Mac or a cloud
+-native build workflow to produce the iPhone build; Android still builds locally.
+-
+-Android Expo Go may be used for an early map preview. The Google provider on iPhone uses
+-a native build; the app shows a setup message in an iOS Expo Go session instead of trying
+-to render an unavailable Google native component. Builds lacking a configured Maps key
+-also show a setup message. Google authentication, restrictions, quota or connectivity
+-problems can still prevent tiles from loading after keys are configured.
+-
+-No device location permission is requested: selecting a suburb and browsing reports does
+-not require tracking the user's current location.
+-
+-## What the zones mean
+-
+-`GET /api/map/areas/:areaId` returns aggregated fictional seed data only, with no narratives,
+-reporter identities, or private user submissions. Only Braamfontein has mapped demo data.
+-Other supported suburbs return empty snapshots. Unknown area IDs return 404 and database
+-failures return 503. Legacy seeds work without a database migration: the server matches
+-known demo landmark descriptions to explicitly approximate geographic centres.
+-
+-The 30-day window uses **reportedAt (submission time)** because the data has no dependable
+-incident timestamp. The model does not claim to know when an incident happened.
+-Unmapped, incomplete, future-dated and expired records are omitted. Rerunning the existing
+-seed command does not reset existing submission dates; old demo data eventually expires.
+-
+-Demo scoring per landmark:
+-
+-- category weights: robbery/assault 5, vehicle theft 3, theft 2, vandalism/suspicious
+-  activity/infrastructure faults 1, other unclear 0.5;
+-- each contribution decays with a 14-day half-life;
+-- lower concern below 3, elevated from 3 to below 8, higher from 8;
+-- illustrative radius: 140 + 15 metres per report, capped at 300 metres.
+-
+-These are adjustable **prototype heuristics**, not calibrated crime probabilities or
+-validated safety ratings. Radius does not establish a danger boundary. There is no
+-population/exposure correction, verification-based weighting, or predictive model here.
+-
+-Twelve concentric native circles with low opacity produce the fading radar/heat appearance.
+-They use a radius in metres and move/scale with the map; overlapping zones blend visually.
+-This is a radial concern overlay, not a continuous statistical kernel heatmap. Tapping a
+-zone selects the nearest centre within its radius and displays counts, categories and
+-latest submission date. Google attribution is left visible.
+-
+-Green means lower **reported concern within the fictional dataset**; amber means elevated;
+-red means higher. Uncoloured areas mean insufficient data. None of these indicates that a
+-person is safe. The feed and report submission behavior are unchanged.
+-
+-To use real reports later, add structured approximate locations, incident time, moderation,
+-and a deliberately privacy-preserving public aggregation policy before changing the demo
+-filter. Do not infer real locations using the demo-only landmark matcher.
+-
+-## Device checks before merging
+-
+-1. On both platforms, check Google tiles, labels and attribution load; pan and pinch zoom.
+-2. Search/select a suburb; confirm the camera recentres and previous-area zones disappear.
+-3. In Braamfontein, check seeded zones fade outward and stay anchored while zooming.
+-4. Tap overlapping zones, inspect metadata, and toggle the overlay off/on.
+-5. Select a suburb with no data; confirm there is no green safety claim.
+-6. Stop the API; refresh and confirm an error/retry message rather than a fabricated summary.
+-7. Change suburbs during a request; confirm stale results do not appear in the new area.
+-8. Open admin and test a text report and voice transcription as before.
+-
+-Automated checks cover type safety, aggregate filtering/decay, the map endpoint and existing
+-API behavior. Native tile rendering, platform signing, Maps key validity and a live MongoDB
+-connection require your configured environment and device checks.
+-
+-Official setup references:
+-
+-- https://docs.expo.dev/versions/latest/sdk/map-view/
+-- https://github.com/react-native-maps/react-native-maps/blob/master/docs/circle.md
+-- https://developers.google.com/maps/documentation/android-sdk/get-api-key
+-- https://developers.google.com/maps/documentation/ios-sdk/get-api-key
+diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -13,7 +13,6 @@
+         "dotenv": "^18.0.4",
+         "expo": "~57.0.10",
+         "expo-audio": "~57.0.5",
+-        "expo-constants": "~57.0.20",
+         "expo-font": "~57.0.1",
+         "expo-image-picker": "~57.0.20",
+         "expo-status-bar": "~57.0.1",
+@@ -24,8 +23,8 @@
+         "react": "19.2.3",
+         "react-dom": "19.2.3",
+         "react-native": "0.86.2",
+-        "react-native-maps": "1.27.2",
+         "react-native-web": "~0.21.0",
++        "react-native-webview": "13.16.1",
+         "zod": "^4.6.5"
+       },
+       "devDependencies": {
+@@ -2307,12 +2306,6 @@
+         "@types/range-parser": "*",
+         "@types/send": "*"
+       }
+-    },
+-    "node_modules/@types/geojson": {
+-      "version": "7946.0.16",
+-      "resolved": "https://registry.npmjs.org/@types/geojson/-/geojson-7946.0.16.tgz",
+-      "integrity": "sha512-6C8nqWur3j98U6+lXDfTUWIfgvZU+EumvpHKcYjujKH7woYyLj2sUmff0tRhrqM7BohUw7Pz3ZB1jj2gW9Fvmg==",
+-      "license": "MIT"
+     },
+     "node_modules/@types/http-errors": {
+       "version": "2.0.5",
+@@ -6748,28 +6741,6 @@
+         }
+       }
+     },
+-    "node_modules/react-native-maps": {
+-      "version": "1.27.2",
+-      "resolved": "https://registry.npmjs.org/react-native-maps/-/react-native-maps-1.27.2.tgz",
+-      "integrity": "sha512-VKr+xZ2RZGHHJlY6KhlafvGSmK0dq/tUu5uhfJ7K9rwN5pUdubdugzMKGDU/16lXmQSg7xbClKhRctj3Pm5F5g==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@types/geojson": "^7946.0.13"
+-      },
+-      "engines": {
+-        "node": ">= 20.19.4"
+-      },
+-      "peerDependencies": {
+-        "react": ">= 18.3.1",
+-        "react-native": ">= 0.76.0",
+-        "react-native-web": ">= 0.11"
+-      },
+-      "peerDependenciesMeta": {
+-        "react-native-web": {
+-          "optional": true
+-        }
+-      }
+-    },
+     "node_modules/react-native-web": {
+       "version": "0.21.3",
+       "resolved": "https://registry.npmjs.org/react-native-web/-/react-native-web-0.21.3.tgz",
+@@ -6801,6 +6772,20 @@
+       "resolved": "https://registry.npmjs.org/memoize-one/-/memoize-one-6.0.0.tgz",
+       "integrity": "sha512-rkpe71W0N0c0Xz6QD0eJETuWAJGnJ9afsl1srmwPrI+yBCkge5EycXXbYRyvL29zZVUWQCY7InPRCv3GDXuZNw==",
+       "license": "MIT"
++    },
++    "node_modules/react-native-webview": {
++      "version": "13.16.1",
++      "resolved": "https://registry.npmjs.org/react-native-webview/-/react-native-webview-13.16.1.tgz",
++      "integrity": "sha512-If0eHhoEdOYDcHsX+xBFwHMbWBGK1BvGDQDQdVkwtSIXiq1uiqjkpWVP2uQ1as94J0CzvFE9PUNDuhiX0Z6ubw==",
++      "license": "MIT",
++      "dependencies": {
++        "escape-string-regexp": "^4.0.0",
++        "invariant": "2.2.4"
++      },
++      "peerDependencies": {
++        "react": "*",
++        "react-native": "*"
++      }
+     },
+     "node_modules/react-native/node_modules/@react-native/codegen": {
+       "version": "0.86.2",
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -23,7 +23,6 @@
+     "dotenv": "^18.0.4",
+     "expo": "~57.0.10",
+     "expo-audio": "~57.0.5",
+-    "expo-constants": "~57.0.20",
+     "expo-font": "~57.0.1",
+     "expo-image-picker": "~57.0.20",
+     "expo-status-bar": "~57.0.1",
+@@ -34,8 +33,8 @@
+     "react": "19.2.3",
+     "react-dom": "19.2.3",
+     "react-native": "0.86.2",
+-    "react-native-maps": "1.27.2",
+     "react-native-web": "~0.21.0",
++    "react-native-webview": "13.16.1",
+     "zod": "^4.6.5"
+   },
+   "devDependencies": {
+diff --git a/server/test/mapDocument.test.ts b/server/test/mapDocument.test.ts
+new file mode 100644
+--- /dev/null
++++ b/server/test/mapDocument.test.ts
+@@ -0,0 +1,54 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import vm from 'node:vm';
++import { mapDocument, mapUpdateScript } from '../../src/map/mapDocument';
++
++test('map updates safely serialize text that could otherwise close an HTML script', () => {
++  const input = { area: { name: '</script><script>bad()</script>\u2028' }, zones: [] };
++  const script = mapUpdateScript(input);
++  assert.equal(script.includes('</script>'), false);
++  let output: unknown;
++  vm.runInNewContext(script, { window: { updateIlwaMap: (value: unknown) => { output = value; } } });
++  assert.equal(JSON.stringify(output), JSON.stringify(input));
++});
++
++test('map bridge handles delayed updates, selection, clearing and metre-based fading polygons', async () => {
++  const messages: Array<{ type: string; zoneId?: string | null }> = [];
++  const handlers: Record<string, (event?: unknown) => void> = {};
++  let features: Array<{ geometry: { coordinates: number[][][] }; properties: Record<string, unknown> }> = [];
++  const camera: unknown[] = [];
++  const fakeMap = {
++    touchZoomRotate: { disableRotation() {} }, addControl() {}, addSource() {}, addLayer() {},
++    getStyle: () => ({ layers: [{ type: 'symbol', id: 'labels' }] }),
++    getSource: () => ({ setData: (data: { features: typeof features }) => { features = data.features; } }),
++    easeTo: (value: unknown) => camera.push(value), on: (name: string, handler: typeof handlers[string]) => { handlers[name] = handler; }, resize() {},
++  };
++  const window: Record<string, unknown> = { ReactNativeWebView: { postMessage: (value: string) => messages.push(JSON.parse(value)) }, addEventListener() {} };
++  const html = mapDocument();
++  const inline = html.match(/<script>([\s\S]*)<\/script>/)?.[1];
++  assert.ok(inline);
++  // Substitute only the remote module; exercise the actual bridge/geometry implementation.
++  vm.runInNewContext(inline.replace(/import\('[^']+'\)/, 'Promise.resolve(lib)'), {
++    window, lib: { Map: function () { return fakeMap; }, AttributionControl: function () {} },
++  });
++  await Promise.resolve();
++  const update = window.updateIlwaMap as (value: unknown) => void;
++  const zone = { id: 'park', latitude: -26.1987, longitude: 28.0414, radiusMeters: 200, concern: 'higher' };
++  const state = { area: { id: 'braamfontein', latitude: -26.1929, longitude: 28.0341 }, zones: [zone], visible: true };
++  update(state);
++  assert.equal(features.length, 0); // The update is buffered until the map loads.
++  handlers.load?.();
++  assert.equal(features.length, 12);
++  assert.equal(features[0]?.geometry.coordinates[0]?.length, 65);
++  assert.equal(features[0]?.properties.color, '#D93B37');
++  assert.ok(messages.some((message) => message.type === 'ready'));
++  handlers.click?.({ lngLat: { lat: zone.latitude, lng: zone.longitude } });
++  assert.equal(messages.at(-1)?.zoneId, 'park');
++  update({ ...state, zones: [], area: { ...state.area, id: 'melville' } });
++  assert.equal(features.length, 0);
++  assert.equal(camera.length, 2);
++  update({ ...state, visible: false });
++  assert.equal(features.length, 0);
++  handlers.click?.({ lngLat: { lat: zone.latitude, lng: zone.longitude } });
++  assert.equal(messages.at(-1)?.zoneId, null);
++});
+diff --git a/src/components/MapCanvas.native.tsx b/src/components/MapCanvas.native.tsx
+--- a/src/components/MapCanvas.native.tsx
++++ b/src/components/MapCanvas.native.tsx
+@@ -1,65 +1,60 @@
+-import { Fragment, useEffect, useRef, useState } from 'react';
+-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+-import Constants from 'expo-constants';
+-import MapView, { Circle, PROVIDER_GOOGLE, type LatLng } from 'react-native-maps';
++import { useEffect, useMemo, useRef, useState } from 'react';
++import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
++import { WebView } from 'react-native-webview';
+ import { concernColors, concernLabels } from '../../shared/safetyMap';
+ import { useAreaMap } from '../map/AreaProvider';
++import { mapDocument, mapUpdateScript } from '../map/mapDocument';
+ import { colors } from '../theme';
+ import type { MapCanvasProps } from './MapCanvas.types';
+ 
+-function distanceMeters(a: LatLng, b: LatLng) {
+-  const rad = Math.PI / 180;
+-  const dlat = (b.latitude - a.latitude) * rad;
+-  const dlon = (b.longitude - a.longitude) * rad;
+-  const h = Math.sin(dlat / 2) ** 2 + Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dlon / 2) ** 2;
+-  return 6_371_000 * 2 * Math.asin(Math.sqrt(Math.min(1, h)));
+-}
+ export function MapCanvas({ detailed = false, onSelectArea, onSelectZone, selectedZoneId }: MapCanvasProps) {
+   const { area, data, loading, error, refresh } = useAreaMap();
+-  const map = useRef<MapView>(null);
++  const web = useRef<WebView>(null);
++  const document = useMemo(() => ({ html: mapDocument(), baseUrl: 'https://tiles.openfreemap.org/' }), []);
+   const [ready, setReady] = useState(false);
++  const [mapError, setMapError] = useState(false);
+   const [overlayVisible, setOverlayVisible] = useState(true);
+-  const region = { latitude: area.latitude, longitude: area.longitude, latitudeDelta: 0.024, longitudeDelta: 0.024 };
+-  const centre = () => map.current?.animateToRegion(region, 500);
++  const [reload, setReload] = useState(0);
+   useEffect(() => {
+-    if (ready) map.current?.animateToRegion({ latitude: area.latitude, longitude: area.longitude,
+-      latitudeDelta: 0.024, longitudeDelta: 0.024 }, 500);
+-  }, [area.id, area.latitude, area.longitude, ready]);
+-  const expoGo = Constants.appOwnership === 'expo';
+-  const configured = Platform.OS === 'ios' ? Constants.expoConfig?.extra?.googleMapsIosConfigured
+-    : Constants.expoConfig?.extra?.googleMapsAndroidConfigured;
+-  if ((Platform.OS === 'ios' && expoGo) || (!expoGo && !configured)) {
+-    return <View style={[styles.wrap, styles.setup, detailed && styles.detailed]}>
+-      <Text style={styles.setupTitle}>Google Maps setup needed</Text>
+-      <Text style={styles.setupText}>{Platform.OS === 'ios' && expoGo
+-        ? 'Use a native iPhone build for Google Maps. The project includes the iOS key configuration.'
+-        : 'Add the Google Maps key for this platform to your build environment, then rebuild the app.'}</Text>
+-    </View>;
+-  }
++    if (ready) web.current?.injectJavaScript(mapUpdateScript({ area, zones: data?.zones ?? [],
++      selectedZoneId, visible: overlayVisible }));
++  }, [ready, area, data, selectedZoneId, overlayVisible]);
++  useEffect(() => {
++    if (ready || mapError) return;
++    const timer = setTimeout(() => setMapError(true), 20_000);
++    return () => clearTimeout(timer);
++  }, [ready, mapError, reload]);
++  const retryMap = () => { setReady(false); setMapError(false); setReload((value) => value + 1); };
+   return <View style={[styles.wrap, detailed && styles.detailed]}>
+-    <MapView ref={map} provider={PROVIDER_GOOGLE} initialRegion={region} style={StyleSheet.absoluteFill}
+-      onMapReady={() => setReady(true)} scrollEnabled zoomEnabled rotateEnabled pitchEnabled={false}
+-      showsUserLocation={false} showsMyLocationButton={false} toolbarEnabled={false}
+-      accessibilityLabel={`Google map of ${area.name} with demo concern zones`}
+-      onPress={(event) => {
+-        const point = event.nativeEvent.coordinate;
+-        const zone = overlayVisible ? data?.zones.filter((item) => distanceMeters(point, item) <= item.radiusMeters)
+-          .sort((a, b) => distanceMeters(point, a) - distanceMeters(point, b))[0] : undefined;
+-        onSelectZone?.(zone ?? null);
+-        if (zone && !onSelectZone) onSelectArea?.();
+-      }}>
+-      {overlayVisible && data?.zones.map((zone) => <Fragment key={zone.id}>
+-        {Array.from({ length: 12 }, (_, index) => <Circle key={index}
+-          center={{ latitude: zone.latitude, longitude: zone.longitude }}
+-          radius={zone.radiusMeters * (1 - index / 13)} strokeWidth={0}
+-          fillColor={`rgba(${concernColors[zone.concern]},${index === 0 ? 0.035 : 0.055})`} />)}
+-        {selectedZoneId === zone.id && <Circle center={{ latitude: zone.latitude, longitude: zone.longitude }} radius={zone.radiusMeters}
+-          fillColor="transparent" strokeColor={`rgb(${concernColors[zone.concern]})`} strokeWidth={2} />}
+-      </Fragment>)}
+-    </MapView>
++    <WebView key={reload} ref={web} source={document} style={StyleSheet.absoluteFill}
++      originWhitelist={['*']} javaScriptEnabled domStorageEnabled scrollEnabled={false}
++      nestedScrollEnabled setSupportMultipleWindows={false} mixedContentMode="never"
++      allowFileAccess={false} allowUniversalAccessFromFileURLs={false} geolocationEnabled={false}
++      accessibilityLabel={`Street map of ${area.name} with demo concern zones`}
++      onShouldStartLoadWithRequest={(request) => {
++        if (request.url === 'about:blank' || request.url === 'https://tiles.openfreemap.org/') return true;
++        // Attribution links open externally; the map's tiles and scripts are subresources.
++        if (request.url.startsWith('https://')) void Linking.openURL(request.url).catch(() => {});
++        return false;
++      }}
++      onError={() => setMapError(true)} onHttpError={() => setMapError(true)}
++      onContentProcessDidTerminate={retryMap}
++      onMessage={(event) => {
++        let message: unknown;
++        try { message = JSON.parse(event.nativeEvent.data); } catch { return; }
++        if (!message || typeof message !== 'object' || !('type' in message)) return;
++        if (message.type === 'ready') setReady(true);
++        if (message.type === 'map-error') setMapError(true);
++        if (message.type === 'zone' && 'zoneId' in message) {
++          const zone = overlayVisible ? data?.zones.find((item) => item.id === message.zoneId) : undefined;
++          onSelectZone?.(zone ?? null);
++          if (zone && !onSelectZone) onSelectArea?.();
++        }
++      }} />
+     <View style={styles.topRow} pointerEvents="box-none">
+       <View style={styles.badge}><Text style={styles.badgeText}>DEMO · APPROXIMATE LOCATIONS</Text></View>
+-      <Pressable accessibilityRole="button" accessibilityLabel="Recentre on selected suburb" onPress={centre} style={styles.control}>
++      <Pressable accessibilityRole="button" accessibilityLabel="Recentre on selected suburb"
++        onPress={() => web.current?.injectJavaScript('window.recentreIlwaMap && window.recentreIlwaMap(); true;')} style={styles.control}>
+         <Text style={styles.controlText}>⌖</Text>
+       </Pressable>
+     </View>
+@@ -75,7 +70,10 @@
+       </Pressable>
+     </View>
+     <View style={styles.status} pointerEvents="box-none">
+-      {loading ? <View style={styles.statusCard}><ActivityIndicator size="small" color={colors.navy} /><Text style={styles.statusText}>Loading reports…</Text></View>
++      {mapError ? <Pressable accessibilityRole="button" onPress={retryMap} style={styles.statusCard}>
++        <Text style={styles.statusText}>Street map unavailable · Check internet · Retry</Text></Pressable>
++        : !ready ? <View style={styles.statusCard}><ActivityIndicator size="small" color={colors.navy} /><Text style={styles.statusText}>Loading street map…</Text></View>
++        : loading ? <View style={styles.statusCard}><ActivityIndicator size="small" color={colors.navy} /><Text style={styles.statusText}>Loading reports…</Text></View>
+         : error ? <Pressable accessibilityRole="button" onPress={refresh} style={styles.statusCard}><Text style={styles.statusText}>Reports unavailable · Tap to retry</Text></Pressable>
+         : !data?.zones.length ? <View style={styles.statusCard}><Text style={styles.statusText}>No recent mapped reports for {area.name}</Text></View>
+         : <View style={styles.statusCard}><Text style={styles.statusText}>30 days · Tap a zone for details</Text></View>}
+@@ -83,9 +81,6 @@
+   </View>;
+ }
+ const styles = StyleSheet.create({
+-  setup: { justifyContent: 'center', padding: 24 },
+-  setupTitle: { color: colors.ink, fontWeight: '800', fontSize: 18 },
+-  setupText: { color: colors.muted, marginTop: 10, lineHeight: 21 },
+   wrap: { height: 360, overflow: 'hidden', backgroundColor: '#E9EEF3' }, detailed: { height: 350 },
+   topRow: { position: 'absolute', top: 10, left: 10, right: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+   badge: { backgroundColor: 'rgba(255,255,255,0.95)', padding: 8, borderRadius: 6 },
+@@ -96,8 +91,8 @@
+   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 }, dot: { width: 8, height: 8, borderRadius: 4 },
+   legendText: { color: colors.ink, fontSize: 10 }, legendNote: { color: colors.muted, fontSize: 9 },
+   toggle: { color: colors.green, fontWeight: '800', fontSize: 11, paddingVertical: 4 },
+-  // Keep bottom corners clear for Google logo and attribution.
+-  status: { position: 'absolute', bottom: 38, left: 12, right: 12, alignItems: 'center' },
++  // Keep the source attribution unobscured at the bottom of the map.
++  status: { position: 'absolute', bottom: 44, left: 12, right: 12, alignItems: 'center' },
+   statusCard: { flexDirection: 'row', gap: 6, backgroundColor: 'rgba(255,255,255,0.95)', padding: 8, borderRadius: 7 },
+   statusText: { color: colors.ink, fontSize: 11 },
+ });
+diff --git a/src/components/MapCanvas.tsx b/src/components/MapCanvas.tsx
+--- a/src/components/MapCanvas.tsx
++++ b/src/components/MapCanvas.tsx
+@@ -2,6 +2,6 @@
+ import { StyleSheet, Text, View } from 'react-native';
+ import type { MapCanvasProps } from './MapCanvas.types';
+ export function MapCanvas(_props: MapCanvasProps) {
+-  return <View style={styles.message}><Text>Google Maps is available in the Android and iPhone builds.</Text></View>;
++  return <View style={styles.message}><Text>The street map is available in the Android and iPhone builds.</Text></View>;
+ }
+ const styles = StyleSheet.create({ message: { height: 300, padding: 24, justifyContent: 'center', backgroundColor: '#E9EEF3' } });
+diff --git a/src/map/mapDocument.ts b/src/map/mapDocument.ts
+new file mode 100644
+--- /dev/null
++++ b/src/map/mapDocument.ts
+@@ -0,0 +1,85 @@
++// Pinned renderer; the mobile WebView loads public street tiles, never database credentials.
++export const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
++export const MAP_RENDERER_VERSION = '6.11.2';
++
++export function mapDocument() {
++  return `<!doctype html>
++<html><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
++<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@${MAP_RENDERER_VERSION}/dist/maplibre-gl.css">
++<style>html,body,#map{margin:0;width:100%;height:100%;background:#e9eef3;overflow:hidden}
++.maplibregl-ctrl-attrib{font:10px sans-serif}.maplibregl-ctrl-bottom-right{max-width:90%}</style>
++</head><body><div id="map"></div><script>
++(function () {
++  var map, loaded = false, state = null, lastArea = null;
++  function emit(message) {
++    if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(message));
++  }
++  function distance(a, b) {
++    var r = Math.PI / 180, dy = (b.latitude-a.latitude)*r, dx = (b.longitude-a.longitude)*r;
++    var h = Math.sin(dy/2)**2 + Math.cos(a.latitude*r)*Math.cos(b.latitude*r)*Math.sin(dx/2)**2;
++    return 6371000*2*Math.asin(Math.sqrt(Math.min(1,h)));
++  }
++  function ring(zone, radius) {
++    var lat = zone.latitude*Math.PI/180, lon = zone.longitude*Math.PI/180, d = radius/6371000;
++    var points = [];
++    for (var i=0;i<=64;i++) {
++      var bearing = i/64*2*Math.PI;
++      var lat2 = Math.asin(Math.sin(lat)*Math.cos(d)+Math.cos(lat)*Math.sin(d)*Math.cos(bearing));
++      var lon2 = lon+Math.atan2(Math.sin(bearing)*Math.sin(d)*Math.cos(lat), Math.cos(d)-Math.sin(lat)*Math.sin(lat2));
++      points.push([lon2*180/Math.PI,lat2*180/Math.PI]);
++    }
++    return points;
++  }
++  function render() {
++    if (!loaded || !state) return;
++    if (lastArea !== state.area.id) {
++      lastArea = state.area.id;
++      map.easeTo({center:[state.area.longitude,state.area.latitude],zoom:14,duration:500});
++    }
++    var features = [], colors = {lower:'#27875B',elevated:'#D39A16',higher:'#D93B37'};
++    if (state.visible) (state.zones || []).forEach(function (zone) {
++      for (var i=0;i<12;i++) features.push({type:'Feature', properties:{
++        zoneId:zone.id,color:colors[zone.concern],opacity:i===0?0.035:0.055,
++        selected:zone.id===state.selectedZoneId && i===0
++      },geometry:{type:'Polygon',coordinates:[ring(zone,zone.radiusMeters*(1-i/13))]}});
++    });
++    map.getSource('concern-zones').setData({type:'FeatureCollection',features:features});
++  }
++  window.updateIlwaMap = function (next) { state=next; render(); };
++  window.recentreIlwaMap = function () {
++    if (map && state) map.easeTo({center:[state.area.longitude,state.area.latitude],zoom:14,duration:500});
++  };
++  // Dynamic import lets us report CDN failures rather than leave an unexplained blank map.
++  import('https://cdn.jsdelivr.net/npm/maplibre-gl@${MAP_RENDERER_VERSION}/dist/maplibre-gl.mjs').then(function (lib) {
++    map = new lib.Map({container:'map',style:'${MAP_STYLE_URL}',center:[28.0341,-26.1929],zoom:14,
++      pitch:0,attributionControl:false,dragRotate:false,touchPitch:false});
++    map.touchZoomRotate.disableRotation();
++    map.addControl(new lib.AttributionControl({compact:false,customAttribution:'OpenFreeMap'}),'bottom-right');
++    map.on('load',function () {
++      map.addSource('concern-zones',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
++      var labels = map.getStyle().layers.find(function (layer) { return layer.type==='symbol'; });
++      map.addLayer({id:'concern-glow',type:'fill',source:'concern-zones',paint:{
++        'fill-color':['get','color'],'fill-opacity':['get','opacity'],'fill-antialias':true
++      }},labels && labels.id);
++      map.addLayer({id:'concern-selection',type:'line',source:'concern-zones',filter:['==',['get','selected'],true],
++        paint:{'line-color':['get','color'],'line-width':2}},labels && labels.id);
++      loaded=true; render(); emit({type:'ready'});
++    });
++    map.on('error',function () { emit({type:'map-error'}); });
++    map.on('click',function (event) {
++      var point={latitude:event.lngLat.lat,longitude:event.lngLat.lng};
++      var matches=state && state.visible ? state.zones.filter(function (zone) { return distance(point,zone)<=zone.radiusMeters; }) : [];
++      matches.sort(function (a,b) { return distance(point,a)-distance(point,b); });
++      emit({type:'zone',zoneId:matches.length?matches[0].id:null});
++    });
++    window.addEventListener('resize',function () { map.resize(); });
++  }).catch(function () { emit({type:'map-error'}); });
++})();
++</script></body></html>`;
++}
++
++export function mapUpdateScript(value: unknown) {
++  const json = JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
++  return `window.updateIlwaMap && window.updateIlwaMap(${json}); true;`;
++}

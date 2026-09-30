@@ -1,0 +1,175 @@
+diff --git a/docs/mobile-free-maps.md b/docs/mobile-free-maps.md
+--- a/docs/mobile-free-maps.md
++++ b/docs/mobile-free-maps.md
+@@ -59,7 +59,7 @@
+ 
+ ## How it works
+ 
+-A mobile WebView hosts the pinned MapLibre GL JS 6.11.2 renderer. It loads street tiles,
++A mobile WebView hosts the pinned MapLibre GL JS 5.12.0 renderer. It loads street tiles,
+ labels, fonts and sprites from the OpenFreeMap Liberty style. Pan, pinch zoom and suburb
+ recentering work on both platforms. No device geolocation permission is requested.
+ 
+@@ -118,7 +118,8 @@
+ 
+ Automated verification: TypeScript, 25 tests, and Android/iOS JavaScript bundles passed.
+ Live MongoDB verification was skipped because no test database is configured. Renderer URL
+-availability was checked. WebView tile rendering and gestures still require device checks.
++availability was checked. The classic v5 loader retains WebGL1 support and can fall back
++from jsDelivr to unpkg. Errors show the renderer/WebView message for phone diagnosis. WebView tile rendering and gestures still require device checks.
+ 
+ References:
+ 
+diff --git a/src/map/mapDocument.ts b/src/map/mapDocument.ts
+--- a/src/map/mapDocument.ts
++++ b/src/map/mapDocument.ts
+@@ -1,12 +1,12 @@
+ // Pinned renderer; the mobile WebView loads public street tiles, never database credentials.
+ export const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+-export const MAP_RENDERER_VERSION = '6.11.2';
++export const MAP_RENDERER_VERSION = '5.12.0';
+ 
+ export function mapDocument() {
+   return `<!doctype html>
+ <html><head><meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@${MAP_RENDERER_VERSION}/dist/maplibre-gl.css">
++<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@${MAP_RENDERER_VERSION}/dist/maplibre-gl.css" onerror="this.onerror=null;this.href='https://unpkg.com/maplibre-gl@${MAP_RENDERER_VERSION}/dist/maplibre-gl.css'">
+ <style>html,body,#map{margin:0;width:100%;height:100%;background:#e9eef3;overflow:hidden}
+ .maplibregl-ctrl-attrib{font:10px sans-serif}.maplibregl-ctrl-bottom-right{max-width:90%}</style>
+ </head><body><div id="map"></div><script>
+@@ -50,8 +50,33 @@
+   window.recentreIlwaMap = function () {
+     if (map && state) map.easeTo({center:[state.area.longitude,state.area.latitude],zoom:14,duration:500});
+   };
+-  // Dynamic import lets us report CDN failures rather than leave an unexplained blank map.
+-  import('https://cdn.jsdelivr.net/npm/maplibre-gl@${MAP_RENDERER_VERSION}/dist/maplibre-gl.mjs').then(function (lib) {
++  // v5's classic bundle retains WebGL1 support and avoids module-worker requirements.
++  function loadRenderer() {
++    var urls = [
++      'https://cdn.jsdelivr.net/npm/maplibre-gl@${MAP_RENDERER_VERSION}/dist/maplibre-gl.js',
++      'https://unpkg.com/maplibre-gl@${MAP_RENDERER_VERSION}/dist/maplibre-gl.js'
++    ];
++    return new Promise(function (resolve,reject) {
++      function attempt(index) {
++        if (index >= urls.length) { reject(new Error('Map renderer download failed. Try another network.')); return; }
++        var script=document.createElement('script'), settled=false;
++        var timer=setTimeout(function () { next(); },12000);
++        function next() { if (settled) return; settled=true; clearTimeout(timer); script.remove(); attempt(index+1); }
++        script.src=urls[index];
++        script.onload=function () {
++          if (settled) return;
++          if (!window.maplibregl) { next(); return; }
++          settled=true; clearTimeout(timer); resolve(window.maplibregl);
++        };
++        script.onerror=next; document.head.appendChild(script);
++      }
++      attempt(0);
++    });
++  }
++  loadRenderer().then(function (lib) {
++    if (typeof lib.supported === 'function' && !lib.supported()) {
++      throw new Error('WebGL unavailable in this phone WebView. Update Android System WebView / browser.');
++    }
+     map = new lib.Map({container:'map',style:'${MAP_STYLE_URL}',center:[28.0341,-26.1929],zoom:14,
+       pitch:0,attributionControl:false,dragRotate:false,touchPitch:false});
+     map.touchZoomRotate.disableRotation();
+@@ -66,7 +91,7 @@
+         paint:{'line-color':['get','color'],'line-width':2}},labels && labels.id);
+       loaded=true; render(); emit({type:'ready'});
+     });
+-    map.on('error',function () { emit({type:'map-error'}); });
++    map.on('error',function (event) { emit({type:'map-error',message:String(event.error && event.error.message || 'Map resource failed to load.').slice(0,240)}); });
+     map.on('click',function (event) {
+       var point={latitude:event.lngLat.lat,longitude:event.lngLat.lng};
+       var matches=state && state.visible ? state.zones.filter(function (zone) { return distance(point,zone)<=zone.radiusMeters; }) : [];
+@@ -74,7 +99,7 @@
+       emit({type:'zone',zoneId:matches.length?matches[0].id:null});
+     });
+     window.addEventListener('resize',function () { map.resize(); });
+-  }).catch(function () { emit({type:'map-error'}); });
++  }).catch(function (error) { emit({type:'map-error',message:String(error && error.message || 'Could not start the map renderer.').slice(0,240)}); });
+ })();
+ </script></body></html>`;
+ }
+diff --git a/src/components/MapCanvas.native.tsx b/src/components/MapCanvas.native.tsx
+--- a/src/components/MapCanvas.native.tsx
++++ b/src/components/MapCanvas.native.tsx
+@@ -12,7 +12,7 @@
+   const web = useRef<WebView>(null);
+   const document = useMemo(() => ({ html: mapDocument(), baseUrl: 'https://tiles.openfreemap.org/' }), []);
+   const [ready, setReady] = useState(false);
+-  const [mapError, setMapError] = useState(false);
++  const [mapError, setMapError] = useState('');
+   const [overlayVisible, setOverlayVisible] = useState(true);
+   const [reload, setReload] = useState(0);
+   useEffect(() => {
+@@ -21,10 +21,10 @@
+   }, [ready, area, data, selectedZoneId, overlayVisible]);
+   useEffect(() => {
+     if (ready || mapError) return;
+-    const timer = setTimeout(() => setMapError(true), 20_000);
++    const timer = setTimeout(() => setMapError('Map loading timed out. Check tiles.openfreemap.org on this phone.'), 35_000);
+     return () => clearTimeout(timer);
+   }, [ready, mapError, reload]);
+-  const retryMap = () => { setReady(false); setMapError(false); setReload((value) => value + 1); };
++  const retryMap = () => { setReady(false); setMapError(''); setReload((value) => value + 1); };
+   return <View style={[styles.wrap, detailed && styles.detailed]}>
+     <WebView key={reload} ref={web} source={document} style={StyleSheet.absoluteFill}
+       originWhitelist={['*']} javaScriptEnabled domStorageEnabled scrollEnabled={false}
+@@ -37,14 +37,17 @@
+         if (request.url.startsWith('https://')) void Linking.openURL(request.url).catch(() => {});
+         return false;
+       }}
+-      onError={() => setMapError(true)} onHttpError={() => setMapError(true)}
++      onError={(event) => setMapError(event.nativeEvent.description || 'WebView failed to load.')}
++      onHttpError={(event) => setMapError(`Map request returned HTTP ${event.nativeEvent.statusCode}.`)}
++      androidLayerType="hardware"
+       onContentProcessDidTerminate={retryMap}
+       onMessage={(event) => {
+         let message: unknown;
+         try { message = JSON.parse(event.nativeEvent.data); } catch { return; }
+         if (!message || typeof message !== 'object' || !('type' in message)) return;
+         if (message.type === 'ready') setReady(true);
+-        if (message.type === 'map-error') setMapError(true);
++        if (message.type === 'map-error') setMapError('message' in message && typeof message.message === 'string'
++          ? message.message.slice(0,240) : 'A map resource failed to load.');
+         if (message.type === 'zone' && 'zoneId' in message) {
+           const zone = overlayVisible ? data?.zones.find((item) => item.id === message.zoneId) : undefined;
+           onSelectZone?.(zone ?? null);
+@@ -71,7 +74,7 @@
+     </View>
+     <View style={styles.status} pointerEvents="box-none">
+       {mapError ? <Pressable accessibilityRole="button" onPress={retryMap} style={styles.statusCard}>
+-        <Text style={styles.statusText}>Street map unavailable · Check internet · Retry</Text></Pressable>
++        <Text style={styles.statusText}>{mapError} · Tap to retry</Text></Pressable>
+         : !ready ? <View style={styles.statusCard}><ActivityIndicator size="small" color={colors.navy} /><Text style={styles.statusText}>Loading street map…</Text></View>
+         : loading ? <View style={styles.statusCard}><ActivityIndicator size="small" color={colors.navy} /><Text style={styles.statusText}>Loading reports…</Text></View>
+         : error ? <Pressable accessibilityRole="button" onPress={refresh} style={styles.statusCard}><Text style={styles.statusText}>Reports unavailable · Tap to retry</Text></Pressable>
+@@ -94,5 +97,5 @@
+   // Keep the source attribution unobscured at the bottom of the map.
+   status: { position: 'absolute', bottom: 44, left: 12, right: 12, alignItems: 'center' },
+   statusCard: { flexDirection: 'row', gap: 6, backgroundColor: 'rgba(255,255,255,0.95)', padding: 8, borderRadius: 7 },
+-  statusText: { color: colors.ink, fontSize: 11 },
++  statusText: { color: colors.ink, fontSize: 11, flexShrink: 1 },
+ });
+diff --git a/server/test/mapDocument.test.ts b/server/test/mapDocument.test.ts
+--- a/server/test/mapDocument.test.ts
++++ b/server/test/mapDocument.test.ts
+@@ -28,7 +28,7 @@
+   const inline = html.match(/<script>([\s\S]*)<\/script>/)?.[1];
+   assert.ok(inline);
+   // Substitute only the remote module; exercise the actual bridge/geometry implementation.
+-  vm.runInNewContext(inline.replace(/import\('[^']+'\)/, 'Promise.resolve(lib)'), {
++  vm.runInNewContext(inline.replace('loadRenderer().then', 'Promise.resolve(lib).then'), {
+     window, lib: { Map: function () { return fakeMap; }, AttributionControl: function () {} },
+   });
+   await Promise.resolve();
+@@ -51,4 +51,7 @@
+   assert.equal(features.length, 0);
+   handlers.click?.({ lngLat: { lat: zone.latitude, lng: zone.longitude } });
+   assert.equal(messages.at(-1)?.zoneId, null);
++  handlers.error?.({ error: { message: 'Tile host unreachable' } });
++  assert.equal(messages.at(-1)?.type, 'map-error');
++  assert.equal((messages.at(-1) as unknown as { message: string }).message, 'Tile host unreachable');
+ });

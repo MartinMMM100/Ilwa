@@ -1,3 +1,4 @@
+import { AreaProvider } from './src/map/AreaProvider';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Platform, Pressable, SafeAreaView, StatusBar as NativeStatusBar, StyleSheet, Text, View } from 'react-native';
@@ -16,6 +17,7 @@ export default function App() {
   const [route, setRoute] = useState<Route>('home');
 
   return (
+    <AreaProvider>
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.app}>
         {route === 'home' && <HomeScreen navigate={setRoute} />}
@@ -38,6 +40,7 @@ export default function App() {
       </View>
       <StatusBar style="light" />
     </SafeAreaView>
+    </AreaProvider>
   );
 }
 

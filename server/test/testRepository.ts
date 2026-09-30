@@ -14,6 +14,10 @@ import type {
 export class TestIncidentRepository implements IncidentRepository {
   readonly documents = new Map<string, IncidentDocument>();
 
+  async listMapIncidents(): Promise<IncidentDocument[]> {
+    return [...this.documents.values()].filter((item) => item.isDemoData === true);
+  }
+
   async ensureIndexes() {}
 
   async insertPending(incident: IncidentDocument): Promise<StoredIncident> {

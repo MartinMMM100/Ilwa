@@ -46,6 +46,7 @@ export type StoredIncident = Pick<
 >;
 
 export interface IncidentRepository {
+  listMapIncidents(): Promise<IncidentDocument[]>;
   ensureIndexes(): Promise<void>;
   insertPending(incident: IncidentDocument): Promise<StoredIncident>;
   findBySubmissionId(submissionId: string): Promise<StoredIncident | null>;

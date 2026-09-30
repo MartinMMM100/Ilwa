@@ -139,7 +139,11 @@ npm run test:integration
 
 ## Included flows
 
-- Safety map with color-coded community report zones and a threat legend
-- Braamfontein area information with response metrics and recent reports
-- Filterable live community feed
-- Typed or recorded incident reports with optional photo attachments and MongoDB-backed text storage
+- MapLibre / OpenFreeMap street maps on Android and iOS with searchable Johannesburg pilot suburbs
+- Fading, geographically anchored demo concern zones with tap-to-view details
+- MongoDB-backed aggregate map data, refresh, retry, and empty states
+- Existing admin dashboard, text reports, AI extraction and voice transcription
+- The news feed remains a static prototype
+
+See [mobile-free-maps.md](docs/mobile-free-maps.md) for no-key Expo Go setup,
+patch application, scoring rules and device checks.

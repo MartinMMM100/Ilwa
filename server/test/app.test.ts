@@ -259,3 +259,17 @@ async function withServer(server: Server, callback: (baseUrl: string) => Promise
     });
   }
 }
+
+test('map endpoint returns demo aggregates, empty suburbs, and rejects unknown areas', async () => {
+  const repository = new TestIncidentRepository();
+  const app = createApp({ repository, environment: { NODE_ENV: 'test', DEV_REPORTER_ID: 'development-only-test-resident' } });
+  await withServer(app.listen(0), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/map/areas/braamfontein`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { demo: boolean; zones: unknown[] };
+    assert.equal(body.demo, true);
+    assert.deepEqual(body.zones, []);
+    assert.equal((await fetch(`${baseUrl}/api/map/areas/melville`)).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/map/areas/unknown`)).status, 404);
+  });
+});
