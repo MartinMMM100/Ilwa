@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from './baseUrl';
+
 export type PublicFeedCategory = 'Crime' | 'Safety' | 'Community';
 export type PublicFeedThreatLevel = 'unknown' | 'low' | 'medium' | 'high' | 'critical';
 
@@ -23,7 +25,7 @@ export type PublicFeedItem = {
 };
 
 export async function fetchPublicFeed(signal?: AbortSignal): Promise<PublicFeedItem[]> {
-  const apiBaseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+  const apiBaseUrl = getApiBaseUrl();
   const response = await fetch(`${apiBaseUrl}/api/feed?limit=30`, { signal });
 
   const payload: unknown = await response.json().catch(() => null);

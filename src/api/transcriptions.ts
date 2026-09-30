@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { getApiBaseUrl } from './baseUrl';
 
 type TranscriptionResponse = {
   transcript: string;
@@ -39,10 +40,6 @@ export async function transcribeIncidentAudio(audioUri: string): Promise<string>
   }
 
   return payload.transcript;
-}
-
-function getApiBaseUrl() {
-  return (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
 }
 
 function getWebFileName(mediaType: string) {

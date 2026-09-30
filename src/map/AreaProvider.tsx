@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { mapSnapshotSchema, suburbs, type AreaId, type MapSnapshot, type Suburb } from '../../shared/safetyMap';
+import { getApiBaseUrl } from '../api/baseUrl';
 
 type AreaState = {
   area: Suburb; selectArea: (id: AreaId) => void; data: MapSnapshot | null;
@@ -19,7 +20,7 @@ export function AreaProvider({ children }: { children: ReactNode }) {
     let active = true;
     const load = async () => {
       try {
-        const base = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+        const base = getApiBaseUrl();
         const response = await fetch(`${base}/api/map/areas/${areaId}`, { signal: controller.signal });
         if (!response.ok) throw new Error('Area reports could not be loaded.');
         const data = mapSnapshotSchema.parse(await response.json());

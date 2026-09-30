@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from './baseUrl';
+
 export type AdminIncidentCategory =
   | 'robbery'
   | 'theft'
@@ -38,7 +40,7 @@ export type AdminIncident = {
 };
 
 export async function fetchAdminIncidents(): Promise<AdminIncident[]> {
-  const apiBaseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+  const apiBaseUrl = getApiBaseUrl();
   const response = await fetch(`${apiBaseUrl}/api/admin/incidents`);
 
   if (!response.ok) {

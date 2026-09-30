@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { getApiBaseUrl } from './baseUrl';
 
 export type IncidentSubmissionResult = {
   reference: string;
@@ -22,7 +23,7 @@ export async function submitIncident(
   description: string,
   submissionId: string,
 ): Promise<IncidentSubmissionResult> {
-  const apiBaseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+  const apiBaseUrl = getApiBaseUrl();
   const response = await fetch(`${apiBaseUrl}/api/incidents`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -45,7 +46,7 @@ export async function uploadIncidentPhoto(
   reportReference: string,
   attachment: IncidentPhotoAttachment,
 ) {
-  const apiBaseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+  const apiBaseUrl = getApiBaseUrl();
   const form = new FormData();
 
   if (Platform.OS === 'web') {
